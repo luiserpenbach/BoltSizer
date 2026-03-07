@@ -45,9 +45,9 @@ export function BoltSelection() {
 
   // Load reference data on mount
   useEffect(() => {
-    Promise.all([fetchBolts(), fetchMaterials(), fetchCoatings(), fetchTighteningMethods()]).then(
-      ([b, m, c, t]) => { setBolts(b); setMaterials(m); setCoatings(c); setTightening(t); }
-    );
+    Promise.all([fetchBolts(), fetchMaterials(), fetchCoatings(), fetchTighteningMethods()])
+      .then(([b, m, c, t]) => { setBolts(b); setMaterials(m); setCoatings(c); setTightening(t); })
+      .catch((e) => setPreviewError(`Failed to load reference data: ${e.message}`));
   }, []);
 
   // Debounce timer ref
