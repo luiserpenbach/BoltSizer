@@ -1,0 +1,41 @@
+{
+  "_comment": "ECSS bolt circle reference case — 8× M10 ISO 10.9 with bending moment.",
+  "_source": "Hand-calculated reference for BoltSizer validation",
+  "bolt": {
+    "designation": "M10",
+    "grade": "ISO 10.9",
+    "shank_length": 15.0,
+    "threaded_length": 12.0
+  },
+  "bolt_circle": {
+    "num_bolts": 8,
+    "bolt_circle_diameter": 100.0,
+    "nut_factor_K": 0.13,
+    "assembly_torque": 50000,
+    "tightening_method": "torque_wrench",
+    "num_mating_surfaces": 2,
+    "surface_roughness_Rz": 6.3
+  },
+  "interface": {
+    "layers": [
+      {"material": "Aluminium alloy", "thickness": 10.0, "youngs_modulus": 70000},
+      {"material": "Aluminium alloy", "thickness": 10.0, "youngs_modulus": 70000}
+    ],
+    "interface_treatment": "bare metal",
+    "friction_coefficient": 0.15,
+    "num_friction_interfaces": 1
+  },
+  "loading": {
+    "axial_force": 20000,
+    "bending_moment": 500000,
+    "shear_force": 8000,
+    "load_factor": 1.25,
+    "case_name": "ECSS_Ref"
+  },
+  "expected": {
+    "F_M_nominal_approx": 38462,
+    "critical_bolt_note": "Bolt at 0 deg (top of bending) is critical",
+    "alpha_A": 1.6,
+    "note": "F_M = 50000 / (0.13 * 10) = 38462 N"
+  }
+}

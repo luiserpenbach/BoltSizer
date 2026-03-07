@@ -1,0 +1,40 @@
+{
+  "_comment": "VDI 2230 Part 1 (2014) single bolt worked example — M12 ISO 8.8, torque wrench.",
+  "_source": "VDI 2230:2014 Part 1, Appendix A1 reference values (adapted for test validation)",
+  "bolt": {
+    "designation": "M12",
+    "grade": "ISO 8.8",
+    "shank_length": 20.0,
+    "threaded_length": 15.0
+  },
+  "bolt_circle": {
+    "num_bolts": 1,
+    "bolt_circle_diameter": 0.0,
+    "nut_factor_K": 0.16,
+    "assembly_torque": 85000,
+    "tightening_method": "torque_wrench",
+    "num_mating_surfaces": 2,
+    "surface_roughness_Rz": 6.3
+  },
+  "interface": {
+    "layers": [
+      {"material": "Steel (carbon)", "thickness": 20.0, "youngs_modulus": 210000},
+      {"material": "Steel (carbon)", "thickness": 20.0, "youngs_modulus": 210000}
+    ],
+    "interface_treatment": "bare metal",
+    "friction_coefficient": 0.12,
+    "num_friction_interfaces": 1
+  },
+  "loading": {
+    "axial_force": 10000,
+    "bending_moment": 0,
+    "shear_force": 5000,
+    "load_factor": 1.0,
+    "case_name": "VDI_Example1"
+  },
+  "expected": {
+    "F_M_nominal_approx": 44271,
+    "alpha_A": 1.6,
+    "note": "F_M = 85000 / (0.16 * 12) = 44271 N"
+  }
+}
