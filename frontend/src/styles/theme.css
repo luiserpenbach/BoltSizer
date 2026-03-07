@@ -1,0 +1,520 @@
+/* BoltSizer — Palantir / Blueprint.js dark theme overrides */
+
+@import "@blueprintjs/core/lib/css/blueprint.css";
+@import "@blueprintjs/icons/lib/css/blueprint-icons.css";
+@import "@blueprintjs/select/lib/css/blueprint-select.css";
+
+:root {
+  --bg-primary: #1c2127;
+  --bg-surface: #252a31;
+  --bg-elevated: #2f343c;
+  --border-color: #383e47;
+  --text-primary: #f6f7f9;
+  --text-secondary: #abb3bf;
+  --text-muted: #5f6b7c;
+  --accent: #2d72d2;
+  --accent-hover: #4c90f0;
+  --pass-color: #23ab6e;
+  --fail-color: #cd4246;
+  --warn-color: #c87619;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Mono", "Consolas", monospace;
+}
+
+html, body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ---- Numeric values always monospace ---- */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  letter-spacing: -0.02em;
+}
+
+/* ---- Layout ---- */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg-primary);
+}
+
+.app-topbar {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 24px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.app-topbar .app-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.app-topbar .app-brand {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+}
+
+.app-topbar .brand-accent {
+  color: var(--accent);
+}
+
+.step-nav {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 24px;
+}
+
+.main-content {
+  flex: 1;
+  padding: 24px;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* ---- Two-column layout ---- */
+.two-col {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.three-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+.two-col-equal {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* ---- Section headings ---- */
+.section-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 20px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section-heading:first-child {
+  margin-top: 0;
+}
+
+/* ---- Blueprint dark card override ---- */
+.bp5-card {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: none !important;
+}
+
+.bp5-card.elevated {
+  background: var(--bg-elevated) !important;
+}
+
+/* ---- Metric cards ---- */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 12px 14px;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.metric-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+}
+
+.metric-card.warn .metric-value {
+  color: var(--warn-color);
+}
+
+.metric-card.danger .metric-value {
+  color: var(--fail-color);
+}
+
+/* ---- Status tags ---- */
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+
+.status-tag.pass {
+  background: rgba(35, 171, 110, 0.15);
+  color: var(--pass-color);
+  border: 1px solid rgba(35, 171, 110, 0.3);
+}
+
+.status-tag.fail {
+  background: rgba(205, 66, 70, 0.15);
+  color: var(--fail-color);
+  border: 1px solid rgba(205, 66, 70, 0.3);
+}
+
+.status-tag.warning {
+  background: rgba(200, 118, 25, 0.15);
+  color: var(--warn-color);
+  border: 1px solid rgba(200, 118, 25, 0.3);
+}
+
+/* ---- Margins table ---- */
+.margins-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.margins-table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+
+.margins-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.margins-table tr.binding-row td {
+  background: rgba(45, 114, 210, 0.08);
+}
+
+.margins-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ms-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ms-value.pass { color: var(--pass-color); }
+.ms-value.fail { color: var(--fail-color); }
+.ms-value.warning { color: var(--warn-color); }
+
+/* ---- Calc step cards ---- */
+.calc-step-card {
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.calc-step-header {
+  background: var(--bg-elevated);
+  padding: 10px 14px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  user-select: none;
+}
+
+.calc-step-header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.calc-step-body {
+  background: var(--bg-primary);
+  padding: 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.calc-formula {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+}
+
+.calc-sub {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.calc-result {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-hover);
+  margin-bottom: 6px;
+}
+
+.calc-explanation {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ---- Layer editor ---- */
+.layer-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1.5fr auto;
+  gap: 8px;
+  align-items: end;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.layer-row:last-child {
+  border-bottom: none;
+}
+
+.layer-index {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  align-self: center;
+  min-width: 24px;
+}
+
+/* ---- Warnings ---- */
+.warning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.warning-item {
+  background: rgba(200, 118, 25, 0.1);
+  border: 1px solid rgba(200, 118, 25, 0.3);
+  border-radius: 3px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--warn-color);
+  line-height: 1.5;
+}
+
+/* ---- Util bar ---- */
+.util-bar-wrap {
+  margin: 8px 0;
+}
+
+.util-bar-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.util-bar {
+  height: 6px;
+  background: var(--border-color);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.util-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.util-bar-fill.ok { background: var(--pass-color); }
+.util-bar-fill.warn { background: var(--warn-color); }
+.util-bar-fill.danger { background: var(--fail-color); }
+
+/* ---- Action bar at page bottom ---- */
+.page-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+  margin-top: 24px;
+}
+
+/* ---- Input captions ---- */
+.input-caption {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+}
+
+/* ---- Summary row ---- */
+.summary-cards {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.summary-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 12px 16px;
+  min-width: 140px;
+  flex: 1;
+}
+
+/* ---- Blueprint overrides for dark mode ---- */
+.bp5-input,
+.bp5-input-group .bp5-input {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: none !important;
+}
+
+.bp5-html-select select,
+.bp5-select select {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: none !important;
+}
+
+.bp5-label {
+  color: var(--text-secondary) !important;
+  font-size: 12px !important;
+}
+
+.bp5-numeric-input .bp5-input-group .bp5-input {
+  font-family: var(--font-mono) !important;
+}
+
+.bp5-tab {
+  color: var(--text-secondary) !important;
+  font-size: 13px !important;
+}
+
+.bp5-tab[aria-selected="true"] {
+  color: var(--text-primary) !important;
+}
+
+.bp5-tab-indicator {
+  background: var(--accent) !important;
+}
+
+.bp5-tabs.bp5-vertical > .bp5-tab-list {
+  background: var(--bg-surface) !important;
+}
+
+.bp5-progress-bar {
+  background: var(--border-color) !important;
+}
+
+.bp5-progress-bar .bp5-progress-meter {
+  background: var(--accent) !important;
+}
+
+.bp5-progress-bar.warn .bp5-progress-meter {
+  background: var(--warn-color) !important;
+}
+
+.bp5-progress-bar.danger .bp5-progress-meter {
+  background: var(--fail-color) !important;
+}
+
+/* ---- Form group spacing ---- */
+.bp5-form-group {
+  margin-bottom: 12px !important;
+}
+
+/* Compact form groups */
+.compact-form .bp5-form-group {
+  margin-bottom: 8px !important;
+}
+
+/* ---- Recharts ---- */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--border-color) !important;
+}
+
+.recharts-text {
+  fill: var(--text-secondary) !important;
+  font-size: 12px !important;
+}
+
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 3px;
+}
+
+/* ---- KaTeX display ---- */
+.katex-display {
+  margin: 0 !important;
+}
+
+.katex {
+  font-size: 1em !important;
+  color: var(--text-primary) !important;
+}
