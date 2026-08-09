@@ -22,14 +22,14 @@ from boltsizer.standards.bolt_library import BOLT_LIBRARY
 from boltsizer.standards.material_library import MATERIAL_LIBRARY, FLANGE_MATERIAL_E
 from boltsizer.standards.nut_factors import NUT_FACTOR_TABLE, TIGHTENING_SCATTER, TIGHTENING_METHOD_LABELS
 from boltsizer.standards import get_bolt_geometry, get_material
-from boltsizer.models.bolt import Bolt
+from boltsizer.models.bolt import Bolt, BoltMaterial
 from boltsizer.models.joint import BoltCircle, ClampedInterface, ClampedLayer, ExternalLoading
 from boltsizer.calculations.preload import calculate_preload
 from boltsizer.calculations.joint_stiffness import calculate_joint_stiffness
 from boltsizer.calculations.vdi2230 import run_vdi2230_analysis
 from boltsizer.export.pdf_report import generate_pdf_report
 
-app = FastAPI(title="BoltSizer API", version="1.0.0")
+app = FastAPI(title="BoltSizer API", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,32 +88,42 @@ def get_flange_materials():
 # Request / Response models
 # ---------------------------------------------------------------------------
 
-class PreloadPreviewRequest(BaseModel):
+class CustomMaterial(BaseModel):
+    """Explicit material properties for grade == 'Custom'."""
+    yield_strength_MPa: float
+    uts_MPa: float
+    youngs_modulus_MPa: float = 210000.0
+    proof_load_stress_MPa: Optional[float] = None
+    fatigue_limit_MPa: Optional[float] = None   # fastener-specific data only
+    cte_per_K: Optional[float] = None
+
+
+class _BoltFields(BaseModel):
     designation: str
     grade: str
     shank_length_mm: float = 20.0
     threaded_length_mm: float = 15.0
     nut_factor_K: float = 0.16
+    nut_factor_K_min: Optional[float] = None
+    nut_factor_K_max: Optional[float] = None
     assembly_torque_Nmm: float = 0.0
     target_preload_N: float = 0.0
     tightening_method: str = "torque_wrench"
     num_mating_surfaces: int = 2
     surface_roughness_Rz: float = 6.3
+    thread_rolled: Literal["before_ht", "after_ht"] = "before_ht"
+    custom_material: Optional[CustomMaterial] = None
+
+
+class PreloadPreviewRequest(_BoltFields):
     grip_length_mm: float = 40.0
+    # Optional layer stack — enables the correct embedding loss
+    # F_Z = f_Z/(δ_S+δ_P); without it a single steel layer of the grip
+    # length is assumed for the preview.
+    layers: Optional[List[dict]] = None
 
 
-class StiffnessPreviewRequest(BaseModel):
-    # Bolt
-    designation: str
-    grade: str
-    shank_length_mm: float = 20.0
-    threaded_length_mm: float = 15.0
-    nut_factor_K: float = 0.16
-    assembly_torque_Nmm: float = 0.0
-    target_preload_N: float = 0.0
-    tightening_method: str = "torque_wrench"
-    num_mating_surfaces: int = 2
-    surface_roughness_Rz: float = 6.3
+class StiffnessPreviewRequest(_BoltFields):
     # Joint
     num_bolts: int = 8
     bolt_circle_diameter_mm: float = 100.0
@@ -122,6 +132,8 @@ class StiffnessPreviewRequest(BaseModel):
     friction_coefficient: float = 0.12
     num_friction_interfaces: int = 1
     load_intro_factor_n: float = 0.5
+    available_flange_diameter_mm: Optional[float] = None
+    cone_half_angle_deg: float = 30.0
 
 
 class LoadCaseRequest(BaseModel):
@@ -130,21 +142,20 @@ class LoadCaseRequest(BaseModel):
     bending_moment_Nmm: float = 0.0
     shear_force_N: float = 0.0
     torsion_Nmm: float = 0.0
+    axial_force_min_N: float = 0.0
+    bending_moment_min_Nmm: float = 0.0
+    delta_T_C: float = 0.0
+    load_plane: Literal["interface", "bolt_head"] = "interface"
     load_factor: float = 1.0
 
 
-class AnalyzeRequest(BaseModel):
-    # Bolt selection
-    designation: str
-    grade: str
-    shank_length_mm: float = 20.0
-    threaded_length_mm: float = 15.0
-    nut_factor_K: float = 0.16
-    assembly_torque_Nmm: float = 0.0
-    target_preload_N: float = 0.0
-    tightening_method: str = "torque_wrench"
-    num_mating_surfaces: int = 2
-    surface_roughness_Rz: float = 6.3
+class ReportMeta(BaseModel):
+    project_name: str = ""
+    revision: str = "A"
+    engineer_name: str = ""
+
+
+class AnalyzeRequest(_BoltFields):
     # Joint geometry
     num_bolts: int = 8
     bolt_circle_diameter_mm: float = 100.0
@@ -153,21 +164,65 @@ class AnalyzeRequest(BaseModel):
     friction_coefficient: float = 0.12
     num_friction_interfaces: int = 1
     load_intro_factor_n: float = 0.5
+    available_flange_diameter_mm: Optional[float] = None
+    cone_half_angle_deg: float = 30.0
     plate_thickness_mm: float = 20.0
     plate_yield_strength_MPa: float = 240.0
+    surface_pressure_limit_MPa: Optional[float] = None
+    shear_plane_in_threads: bool = True
+    # Tapped joint (no nut): both required to enable the stripping check
+    tapped_engagement_length_mm: Optional[float] = None
+    tapped_material_uts_MPa: Optional[float] = None
+    # Factors of safety — None → defaults for the chosen standard
+    fos_yield: Optional[float] = None
+    fos_ultimate: Optional[float] = None
+    fos_separation: Optional[float] = None
+    fos_slip: Optional[float] = None
     # Load cases
     load_cases: List[LoadCaseRequest] = Field(default_factory=lambda: [LoadCaseRequest()])
     standard: Literal["VDI", "ECSS"] = "VDI"
+    report_meta: Optional[ReportMeta] = None
 
 
 # ---------------------------------------------------------------------------
 # Helper: build Python objects from request dicts
 # ---------------------------------------------------------------------------
 
-def _build_bolt_circle(req: AnalyzeRequest | StiffnessPreviewRequest | PreloadPreviewRequest, num_bolts: int = 1, pcd: float = 0.0) -> BoltCircle:
+def _build_material(req: _BoltFields, nominal_diameter: float) -> BoltMaterial:
+    if req.grade == "Custom":
+        if req.custom_material is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Grade 'Custom' requires explicit material properties "
+                    "(custom_material: yield_strength_MPa, uts_MPa, ...)."
+                ),
+            )
+        cm = req.custom_material
+        if cm.yield_strength_MPa <= 0 or cm.uts_MPa <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Custom material yield/UTS must be positive.",
+            )
+        return BoltMaterial(
+            name="Custom",
+            yield_strength=cm.yield_strength_MPa,
+            uts=cm.uts_MPa,
+            youngs_modulus=cm.youngs_modulus_MPa,
+            fatigue_limit=cm.fatigue_limit_MPa,
+            proof_load_stress=cm.proof_load_stress_MPa,
+            cte=cm.cte_per_K,
+        )
+    return get_material(req.grade, nominal_diameter)
+
+
+def _build_bolt_circle(req: _BoltFields, num_bolts: int = 1, pcd: float = 0.0) -> BoltCircle:
     geom = get_bolt_geometry(req.designation, req.shank_length_mm, req.threaded_length_mm)
-    mat = get_material(req.grade) if req.grade != "Custom" else get_material("ISO 8.8")
-    bolt = Bolt(geometry=geom, material=mat, grade=req.grade)
+    mat = _build_material(req, geom.nominal_diameter)
+    bolt = Bolt(
+        geometry=geom, material=mat, grade=req.grade,
+        thread_rolled=req.thread_rolled,
+    )
     return BoltCircle(
         num_bolts=num_bolts,
         bolt_circle_diameter=pcd,
@@ -178,15 +233,25 @@ def _build_bolt_circle(req: AnalyzeRequest | StiffnessPreviewRequest | PreloadPr
         tightening_method=req.tightening_method,
         num_mating_surfaces=req.num_mating_surfaces,
         surface_roughness_Rz=req.surface_roughness_Rz,
+        nut_factor_K_min=req.nut_factor_K_min,
+        nut_factor_K_max=req.nut_factor_K_max,
     )
 
 
-def _build_interface(layers_data: List[dict], interface_treatment: str, friction_coefficient: float, num_friction_interfaces: int) -> ClampedInterface:
+def _build_interface(
+    layers_data: List[dict],
+    interface_treatment: str,
+    friction_coefficient: float,
+    num_friction_interfaces: int,
+    available_diameter: Optional[float] = None,
+    cone_half_angle_deg: float = 30.0,
+) -> ClampedInterface:
     layers = [
         ClampedLayer(
             material=l["material"],
             thickness=float(l["thickness_mm"]),
             youngs_modulus=float(l.get("E", FLANGE_MATERIAL_E.get(l["material"], 210000.0))),
+            cte=float(l["cte"]) if l.get("cte") is not None else None,
         )
         for l in layers_data
     ]
@@ -197,7 +262,55 @@ def _build_interface(layers_data: List[dict], interface_treatment: str, friction
         interface_treatment=interface_treatment,
         friction_coefficient=friction_coefficient,
         num_friction_interfaces=num_friction_interfaces,
+        available_diameter=available_diameter,
+        cone_half_angle_deg=cone_half_angle_deg,
     )
+
+
+def _build_load_cases(load_cases: List[LoadCaseRequest]) -> List[ExternalLoading]:
+    return [
+        ExternalLoading(
+            axial_force=lc.axial_force_N,
+            bending_moment=lc.bending_moment_Nmm,
+            shear_force=lc.shear_force_N,
+            torsion=lc.torsion_Nmm,
+            axial_force_min=lc.axial_force_min_N,
+            bending_moment_min=lc.bending_moment_min_Nmm,
+            delta_T=lc.delta_T_C,
+            load_plane=lc.load_plane,
+            load_factor=lc.load_factor,
+            case_name=lc.case_name,
+        )
+        for lc in load_cases
+    ]
+
+
+def _run_analysis(req: AnalyzeRequest):
+    bc = _build_bolt_circle(req, num_bolts=req.num_bolts, pcd=req.bolt_circle_diameter_mm)
+    iface = _build_interface(
+        req.layers, req.interface_treatment, req.friction_coefficient,
+        req.num_friction_interfaces, req.available_flange_diameter_mm,
+        req.cone_half_angle_deg,
+    )
+    load_cases = _build_load_cases(req.load_cases)
+    results = run_vdi2230_analysis(
+        bolt_circle=bc,
+        interface=iface,
+        load_cases=load_cases,
+        load_intro_factor_n=req.load_intro_factor_n,
+        plate_thickness=req.plate_thickness_mm,
+        plate_yield_strength=req.plate_yield_strength_MPa,
+        standard=req.standard,
+        fos_yield=req.fos_yield,
+        fos_ultimate=req.fos_ultimate,
+        fos_separation=req.fos_separation,
+        fos_slip=req.fos_slip,
+        surface_pressure_limit=req.surface_pressure_limit_MPa,
+        shear_plane_in_threads=req.shear_plane_in_threads,
+        tapped_engagement_length=req.tapped_engagement_length_mm,
+        tapped_material_uts=req.tapped_material_uts_MPa,
+    )
+    return bc, iface, results
 
 
 # ---------------------------------------------------------------------------
@@ -206,10 +319,27 @@ def _build_interface(layers_data: List[dict], interface_treatment: str, friction
 
 @app.post("/api/preview/preload")
 def preview_preload(req: PreloadPreviewRequest):
-    """Calculate live preload preview for Page 1."""
+    """Calculate live preload preview for Page 1.
+
+    If a layer stack is supplied, the embedding loss uses the correct
+    joint compliance F_Z = f_Z/(δ_S+δ_P); otherwise a single steel layer
+    of the grip length is assumed.
+    """
     try:
         bc = _build_bolt_circle(req, num_bolts=1, pcd=0.0)
-        result = calculate_preload(bc, req.grip_length_mm)
+
+        layers_data = req.layers or [
+            {"material": "Steel (carbon)", "thickness_mm": req.grip_length_mm, "E": 210000.0}
+        ]
+        iface = _build_interface(layers_data, "bare metal", 0.12, 1)
+        stiff = calculate_joint_stiffness(bc, iface)
+
+        result = calculate_preload(
+            bc,
+            iface.total_clamped_length,
+            total_compliance=stiff.delta_S + stiff.delta_P,
+            num_inner_interfaces=max(0, len(iface.layers) - 1),
+        )
         geom = bc.bolt.geometry
         mat = bc.bolt.material
         sigma_proof = mat.proof_load_stress or mat.yield_strength
@@ -227,6 +357,8 @@ def preview_preload(req: PreloadPreviewRequest):
             "stress_area_mm2": geom.stress_area,
             "proof_load_stress_MPa": sigma_proof,
         }
+    except HTTPException:
+        raise
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -238,7 +370,11 @@ def preview_stiffness(req: StiffnessPreviewRequest):
     """Calculate live stiffness preview for Page 2."""
     try:
         bc = _build_bolt_circle(req, num_bolts=req.num_bolts, pcd=req.bolt_circle_diameter_mm)
-        iface = _build_interface(req.layers, req.interface_treatment, req.friction_coefficient, req.num_friction_interfaces)
+        iface = _build_interface(
+            req.layers, req.interface_treatment, req.friction_coefficient,
+            req.num_friction_interfaces, req.available_flange_diameter_mm,
+            req.cone_half_angle_deg,
+        )
         stiff = calculate_joint_stiffness(bc, iface, req.load_intro_factor_n)
         return {
             "delta_S": stiff.delta_S,
@@ -247,6 +383,8 @@ def preview_stiffness(req: StiffnessPreviewRequest):
             "phi_n": stiff.phi_n,
             "load_intro_factor_n": stiff.load_intro_factor_n,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -294,13 +432,17 @@ def _case_to_dict(case) -> dict:
             "F_axial_per_bolt": case.load_dist.F_axial_per_bolt,
             "F_bend_per_bolt": case.load_dist.F_bend_per_bolt,
             "V_shear_per_bolt": case.load_dist.V_shear_per_bolt,
+            "V_direct_per_bolt": case.load_dist.V_direct_per_bolt,
+            "V_torsion_per_bolt": case.load_dist.V_torsion_per_bolt,
             "F_total_axial": case.load_dist.F_total_axial,
+            "F_total_axial_min": case.load_dist.F_total_axial_min,
             "bolt_angles_deg": case.load_dist.bolt_angles_deg,
             "bolt_axial_forces": case.load_dist.bolt_axial_forces,
         },
         "bolt_load_max": case.bolt_load_max,
         "bolt_load_amplitude": case.bolt_load_amplitude,
         "F_clamp_min": case.F_clamp_min,
+        "F_thermal_delta": case.F_thermal_delta,
         "margins": [_margin_to_dict(m) for m in case.margins],
         "calc_steps": case.calc_steps,
         "warnings": case.warnings,
@@ -311,32 +453,15 @@ def _case_to_dict(case) -> dict:
 def analyze(req: AnalyzeRequest):
     """Run full VDI 2230 analysis for all load cases."""
     try:
-        bc = _build_bolt_circle(req, num_bolts=req.num_bolts, pcd=req.bolt_circle_diameter_mm)
-        iface = _build_interface(req.layers, req.interface_treatment, req.friction_coefficient, req.num_friction_interfaces)
-        load_cases = [
-            ExternalLoading(
-                axial_force=lc.axial_force_N,
-                bending_moment=lc.bending_moment_Nmm,
-                shear_force=lc.shear_force_N,
-                torsion=lc.torsion_Nmm,
-                load_factor=lc.load_factor,
-                case_name=lc.case_name,
-            )
-            for lc in req.load_cases
-        ]
-        results = run_vdi2230_analysis(
-            bolt_circle=bc,
-            interface=iface,
-            load_cases=load_cases,
-            load_intro_factor_n=req.load_intro_factor_n,
-            plate_thickness=req.plate_thickness_mm,
-            plate_yield_strength=req.plate_yield_strength_MPa,
-            standard=req.standard,
-        )
+        _, _, results = _run_analysis(req)
         return {
             "standard": results.standard,
             "case_results": [_case_to_dict(c) for c in results.case_results],
         }
+    except HTTPException:
+        raise
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -371,34 +496,41 @@ async def import_json_endpoint(req: dict):
 def export_pdf(req: AnalyzeRequest):
     """Run analysis and generate a PDF report."""
     try:
-        bc = _build_bolt_circle(req, num_bolts=req.num_bolts, pcd=req.bolt_circle_diameter_mm)
-        iface = _build_interface(req.layers, req.interface_treatment, req.friction_coefficient, req.num_friction_interfaces)
-        load_cases = [
-            ExternalLoading(
-                axial_force=lc.axial_force_N,
-                bending_moment=lc.bending_moment_Nmm,
-                shear_force=lc.shear_force_N,
-                torsion=lc.torsion_Nmm,
-                load_factor=lc.load_factor,
-                case_name=lc.case_name,
-            )
-            for lc in req.load_cases
-        ]
-        results = run_vdi2230_analysis(
-            bolt_circle=bc,
-            interface=iface,
-            load_cases=load_cases,
-            load_intro_factor_n=req.load_intro_factor_n,
-            plate_thickness=req.plate_thickness_mm,
-            plate_yield_strength=req.plate_yield_strength_MPa,
-            standard=req.standard,
+        _, _, results = _run_analysis(req)
+        bolt_cfg = {
+            "designation": req.designation,
+            "grade": req.grade,
+            "coating": "—",
+            "nut_factor_K": req.nut_factor_K,
+            "assembly_torque_Nmm": req.assembly_torque_Nmm,
+            "tightening_method": req.tightening_method,
+            "num_mating_surfaces": req.num_mating_surfaces,
+            "surface_roughness_Rz": req.surface_roughness_Rz,
+        }
+        joint_cfg = {
+            "num_bolts": req.num_bolts,
+            "bolt_circle_diameter_mm": req.bolt_circle_diameter_mm,
+            "layers": req.layers,
+            "load_intro_factor_n": req.load_intro_factor_n,
+            "friction_coefficient": req.friction_coefficient,
+            "num_friction_interfaces": req.num_friction_interfaces,
+            "plate_thickness_mm": req.plate_thickness_mm,
+            "plate_yield_strength_MPa": req.plate_yield_strength_MPa,
+        }
+        meta = (req.report_meta or ReportMeta()).model_dump()
+        pdf_bytes = generate_pdf_report(
+            results=results,
+            bolt_cfg=bolt_cfg,
+            joint_cfg=joint_cfg,
+            report_meta=meta,
         )
-        pdf_bytes = generate_pdf_report(bc, iface, results)
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
             headers={"Content-Disposition": "attachment; filename=boltsizer_report.pdf"},
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

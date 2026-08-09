@@ -1,19 +1,22 @@
 """Nut factor (K-factor) and tightening scatter tables.
 
 Sources:
-  VDI 2230 Part 1 (2014) — Table A5 (scatter factors), Table 5.2 (K-factors)
-  NASA-STD-5020A         — K-factor guidance for space hardware
-  Bickford, "An Introduction to the Design and Behavior of Bolted Joints"
+  NASA-STD-5020B / Bickford — K-factor (nut factor) guidance.  Note the
+    K-factor torque relation is NOT part of VDI 2230; VDI uses the full
+    thread-geometry torque decomposition.  The K shortcut is retained here
+    because it is standard aerospace practice.
+  VDI 2230 Part 1 (2014) Table A8 — tightening factor α_A guide values.
 
 The nut/K-factor K relates applied torque to bolt preload:
     F_M = M_A / (K · d)
 where d is the nominal bolt diameter [mm], M_A is the assembly torque [N·mm],
-and F_M is the resulting preload [N].
+and F_M is the resulting NOMINAL preload [N].
 
-Tightening scatter factor α_A:
-    F_M_max = F_M_target
-    F_M_min = F_M_target / α_A
-Higher α_A = greater uncertainty in achieved preload.
+Tightening scatter factor α_A = F_M_max / F_M_min.  The preload module
+applies it symmetrically about the nominal:
+    ε = (α_A − 1) / (α_A + 1)
+    F_M_max = F_M_nom · (1 + ε),   F_M_min = F_M_nom · (1 − ε)
+so that F_M_max / F_M_min = α_A exactly.
 """
 from __future__ import annotations
 from typing import Dict, Optional
@@ -40,20 +43,22 @@ NUT_FACTOR_TABLE: Dict[str, tuple] = {
 }
 
 # ---------------------------------------------------------------------------
-# Tightening method scatter factors (VDI 2230 Table A5)
+# Tightening method scatter factors (VDI 2230 Part 1 (2014) Table A8
+# guide values; where the table gives a range, a representative value is
+# used — conservative end for uncontrolled methods)
 # Key: tightening method
 # Value: (alpha_A, description)
-# alpha_A = F_M_max / F_M_min (so F_M_min = F_M_max / alpha_A)
+# alpha_A = F_M_max / F_M_min
 # ---------------------------------------------------------------------------
 TIGHTENING_SCATTER: Dict[str, tuple] = {
     #  method                    α_A   description
-    "torque_wrench":            (1.60, "Torque wrench (± tolerance class B)"),
-    "torque_wrench_precise":    (1.40, "Torque wrench (calibrated, ± 4 %)"),
-    "torque_angle":             (1.20, "Torque + angle (yield-point control)"),
-    "hydraulic_tensioning":     (1.10, "Hydraulic bolt tensioner"),
-    "ultrasonic":               (1.06, "Ultrasonic elongation measurement"),
+    "torque_wrench":            (1.60, "Torque wrench (VDI range 1.4–1.6)"),
+    "torque_wrench_precise":    (1.40, "Torque wrench, calibrated (VDI 1.4)"),
+    "torque_angle":             (1.20, "Torque + angle control (VDI 1.2–1.4)"),
+    "hydraulic_tensioning":     (1.20, "Hydraulic bolt tensioner (VDI 1.1–1.2)"),
+    "ultrasonic":               (1.10, "Ultrasonic / elongation measurement"),
     "hand_tight":               (2.50, "Hand tight only (estimate)"),
-    "impact_wrench":            (2.00, "Impact wrench (uncontrolled)"),
+    "impact_wrench":            (2.50, "Impact wrench (VDI range 2.5–4)"),
 }
 
 # Human-readable method names for UI display
@@ -80,6 +85,25 @@ def get_nut_factor(condition: str) -> float:
     if condition not in NUT_FACTOR_TABLE:
         return 0.20  # Default to dry
     return NUT_FACTOR_TABLE[condition][0]
+
+
+def get_nut_factor_range(condition: str) -> tuple:
+    """Return (K_nom, K_min, K_max) for the given surface/coating condition.
+
+    Used to bracket the achievable preload: low friction (K_min) gives the
+    highest preload at a given torque, high friction (K_max) the lowest.
+
+    Args:
+        condition: Key from NUT_FACTOR_TABLE.
+
+    Returns:
+        Tuple (K_nom, K_min, K_max); defaults to (0.20, 0.17, 0.23) if the
+        condition is unknown.
+    """
+    if condition not in NUT_FACTOR_TABLE:
+        return (0.20, 0.17, 0.23)
+    k_nom, k_min, k_max, _ = NUT_FACTOR_TABLE[condition]
+    return (k_nom, k_min, k_max)
 
 
 def get_scatter_factor(tightening_method: str) -> float:

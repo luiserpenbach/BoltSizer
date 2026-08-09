@@ -181,15 +181,19 @@ with col_prev:
     try:
         from boltsizer.standards import get_bolt_geometry, get_material
         from boltsizer.models.bolt import Bolt
-        from boltsizer.models.joint import BoltCircle
+        from boltsizer.models.joint import BoltCircle, ClampedInterface, ClampedLayer
         from boltsizer.calculations.preload import calculate_preload
+        from boltsizer.calculations.joint_stiffness import calculate_joint_stiffness
 
         geom = get_bolt_geometry(
             cfg["designation"],
             shank_length=cfg.get("shank_length_mm", 20.0),
             threaded_length=cfg.get("threaded_length_mm", 15.0),
         )
-        mat = get_material(cfg["grade"]) if cfg["grade"] != "Custom" else get_material("ISO 8.8")
+        if cfg["grade"] == "Custom":
+            st.warning("Grade 'Custom' requires explicit properties — preview unavailable.")
+            st.stop()
+        mat = get_material(cfg["grade"], geom.nominal_diameter)
         bolt = Bolt(geometry=geom, material=mat, grade=cfg["grade"])
 
         bc = BoltCircle(
@@ -204,9 +208,27 @@ with col_prev:
             surface_roughness_Rz=float(cfg["surface_roughness_Rz"]),
         )
 
-        # Use a nominal grip length of 40 mm for preview
-        grip = 40.0
-        result = calculate_preload(bc, grip)
+        # Preview grip: use the joint stack if already defined, else 40 mm
+        joint_cfg = st.session_state.get("joint_config", {})
+        layers_cfg = joint_cfg.get("layers") or [
+            {"material": "Steel (carbon)", "thickness_mm": 40.0, "E": 210000.0}
+        ]
+        preview_iface = ClampedInterface(
+            total_clamped_length=0.0,
+            layers=[
+                ClampedLayer(l["material"], float(l["thickness_mm"]), float(l.get("E", 210000.0)))
+                for l in layers_cfg
+            ],
+            interface_treatment="bare metal",
+            friction_coefficient=0.12,
+        )
+        stiff = calculate_joint_stiffness(bc, preview_iface)
+        result = calculate_preload(
+            bc,
+            preview_iface.total_clamped_length,
+            total_compliance=stiff.delta_S + stiff.delta_P,
+            num_inner_interfaces=max(0, len(preview_iface.layers) - 1),
+        )
 
         # Utilisation check
         A_s = geom.stress_area

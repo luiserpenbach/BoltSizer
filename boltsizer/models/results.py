@@ -85,10 +85,15 @@ class LoadDistributionResult:
         critical_bolt_index: Index (0-based) of the most loaded bolt.
         F_axial_per_bolt: Axial force on critical bolt [N] (tension +).
         F_bend_per_bolt: Additional axial force due to bending on critical bolt [N].
-        V_shear_per_bolt: Shear force on critical bolt [N].
+        V_shear_per_bolt: Total shear force on critical bolt [N]
+            (direct share + torsion-induced tangential share, conservative sum).
         F_total_axial: Total axial load on critical bolt [N] = F_axial + F_bend.
         bolt_angles_deg: Angle of each bolt from reference [deg].
         bolt_axial_forces: Axial force on every bolt [N] (list).
+        V_direct_per_bolt: Direct (translational) shear share per bolt [N].
+        V_torsion_per_bolt: Torsion-induced tangential shear per bolt [N].
+        F_total_axial_min: Axial load on the critical bolt under the MINIMUM
+            load set (axial_force_min / bending_moment_min) [N] — for fatigue.
     """
     critical_bolt_index: int
     F_axial_per_bolt: float
@@ -97,6 +102,9 @@ class LoadDistributionResult:
     F_total_axial: float
     bolt_angles_deg: List[float]
     bolt_axial_forces: List[float]
+    V_direct_per_bolt: float = 0.0
+    V_torsion_per_bolt: float = 0.0
+    F_total_axial_min: float = 0.0
 
 
 @dataclass
@@ -111,6 +119,8 @@ class BoltResults:
         bolt_load_max: Maximum total bolt load [N].
         bolt_load_amplitude: Fatigue load amplitude [N].
         F_clamp_min: Minimum clamping force per bolt at critical bolt [N].
+        F_thermal_delta: Thermal preload change for this case [N].
+            Positive = preload LOSS (bolt expands more than the stack).
         margins: List of all margin of safety checks.
         calc_steps: Ordered list of calculation step dicts for UI display.
                     Each dict: {step, formula_latex, substitution, result, explanation}.
@@ -123,7 +133,8 @@ class BoltResults:
     bolt_load_max: float
     bolt_load_amplitude: float
     F_clamp_min: float
-    margins: List[MarginOfSafety]
+    F_thermal_delta: float = 0.0
+    margins: List[MarginOfSafety] = field(default_factory=list)
     calc_steps: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
 

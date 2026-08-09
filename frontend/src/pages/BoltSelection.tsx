@@ -32,7 +32,7 @@ function getBoltsByStandard(lib: BoltLibrary, std: string) {
 }
 
 export function BoltSelection() {
-  const { boltConfig, setBoltConfig, setCurrentStep } = useAppStore();
+  const { boltConfig, jointConfig, setBoltConfig, setCurrentStep } = useAppStore();
 
   const [bolts, setBolts] = useState<BoltLibrary>({});
   const [materials, setMaterials] = useState<MaterialLibrary>({});
@@ -68,12 +68,13 @@ export function BoltSelection() {
       tightening_method: boltConfig.tightening_method,
       num_mating_surfaces: boltConfig.num_mating_surfaces,
       surface_roughness_Rz: boltConfig.surface_roughness_Rz,
-      grip_length_mm: 40,
+      grip_length_mm: jointConfig.layers.reduce((s, l) => s + l.thickness_mm, 0),
+      layers: jointConfig.layers,
     })
       .then(setPreview)
       .catch((e) => setPreviewError(e.message ?? "Preview failed"))
       .finally(() => setPreviewLoading(false));
-  }, [boltConfig]);
+  }, [boltConfig, jointConfig]);
 
   // Debounced effect
   useEffect(() => {

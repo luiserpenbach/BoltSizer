@@ -37,14 +37,23 @@ class TestBoltCompliance:
         result = calculate_joint_stiffness(bc, iface)
         assert result.delta_S > 0
 
-    def test_longer_bolt_higher_compliance(self):
-        """Doubling shank length should roughly double compliance."""
+    def test_more_shank_in_grip_lower_compliance(self):
+        """The loaded lengths are reconciled with the grip: a longer shank
+        within the same grip replaces thread (A_d3) with shank (A_N > A_d3),
+        so the bolt gets STIFFER (lower compliance)."""
         _, bc_short = _make_bolt_and_circle(shank=10.0, thread=10.0)
         _, bc_long = _make_bolt_and_circle(shank=30.0, thread=10.0)
         iface = _steel_interface()
         r_short = calculate_joint_stiffness(bc_short, iface)
         r_long = calculate_joint_stiffness(bc_long, iface)
-        assert r_long.delta_S > r_short.delta_S
+        assert r_long.delta_S < r_short.delta_S
+
+    def test_longer_grip_higher_compliance(self):
+        """A longer grip (thicker stack) increases bolt compliance."""
+        _, bc = _make_bolt_and_circle(shank=10.0, thread=10.0)
+        r_thin = calculate_joint_stiffness(bc, _steel_interface(thickness=15.0))
+        r_thick = calculate_joint_stiffness(bc, _steel_interface(thickness=30.0))
+        assert r_thick.delta_S > r_thin.delta_S
 
     def test_larger_diameter_lower_compliance(self):
         """Larger bolt diameter → larger area → lower compliance."""

@@ -8,6 +8,33 @@ internal design use**. There are 6 critical defects — including one dimensiona
 corrupts every downstream margin, and several non-conservative errors that overstate margins.
 The test suite (46 passing) is self-referential and cannot catch any of them.
 
+---
+
+## FIX STATUS (2026-08-09, same branch)
+
+All findings below have been **implemented and fixed** in the follow-up commit on this
+branch, with reference validation tests added (`tests/test_validation.py`):
+
+| Finding | Status |
+|---|---|
+| C1 cone compliance (dimensional) | ✅ Fixed — closed-form frustum with d_h, opposed cones meeting at mid-grip, per-layer piecewise integration, optional D_A cap. δ_P matches hand calc to 1e-9; φ = 0.174 for the M12 steel reference joint. |
+| C2 embedding loss | ✅ Fixed — F_Z = f_Z/(δ_S+δ_P); stiffness computed before preload; VDI Table 5.4 per-region guide values (axial/shear rows). |
+| C3 ECSS separation convention | ✅ Fixed — both conventions use after-loss preload; ECSS applies a separation FoS (default 1.2). Wrong test replaced. |
+| C4 fatigue allowables | ✅ Fixed — VDI σ_ASV = 0.85·(150/d+45), σ_ASG for rolled-after-HT; smooth-bar limits removed from the library (user override only for fastener test data). |
+| C5 API PDF export | ✅ Fixed — correct signature + report metadata; verified end-to-end (returns valid PDF). |
+| C6 torsion ignored | ✅ Fixed — V_t = M_T/(n_B·r) added to per-bolt shear (conservative scalar sum); degenerate-pattern warning. |
+| H1 bolt compliance | ✅ Fixed — full VDI §5.1.1 terms (head/shank/thread/engaged/nut, A_N vs A_d3), lengths reconciled with the grip; shank>grip warning. |
+| H2 assembly torsion | ✅ Fixed — μ derived from K decomposition, M_G and τ in assembly yield; 50% residual torsion in working yield/ultimate. |
+| H3 scatter convention | ✅ Fixed — symmetric scatter F_nom·(1±ε), ε=(α−1)/(α+1); optional K_min/K_max envelope. |
+| H4 data tables | ✅ Fixed — M20x1.5 + all Unified A_s corrected; ISO 8.8 ≤M16/>M16 split; 10.9→940, 12.9→1100; d_w (ISO 4014) and holes (ISO 273) added; bearing areas recomputed. Self-consistency tests added. |
+| H5 missing checks | ✅ Implemented — surface pressure under head, ultimate margins (FOSU), thread stripping (tapped joints), thermal preload change (CTE per material, ΔT per case). ECSS FoS defaults wired (1.1/1.25/1.2). |
+| M1–M9 | ✅ Fixed — fatigue min/max load set, load_plane wired to n, per-bolt self-loosening warning, preview uses real stack, Custom grade validated (400 without properties), shear on A_d3 with 0.577 + ultimate, embedding table per-region, tests replaced with reference validation. |
+
+Remaining known limitations (documented, not defects): cone half-angle fixed at 30° by
+default (configurable), Unified d_w/d_h use documented fallback estimates, bearing allowable
+remains the 1.5·σ_y convention, prying/eccentricity not modeled. Validate against SpaceBolt
+reports before production use.
+
 Severity legend:
 - **CRITICAL** — produces wrong numbers in normal use, or a non-conservative safety error.
 - **HIGH** — deviates from VDI 2230 / ECSS-E-HB-32-23 in a way that will not match reference

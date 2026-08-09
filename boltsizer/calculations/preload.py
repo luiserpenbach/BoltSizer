@@ -1,16 +1,28 @@
-"""Preload calculation module — VDI 2230 Part 1 (2014) §4 and §5.4.
+"""Preload calculation module.
 
 Sign convention: forces are positive in tension (bolt stretching direction).
 Units: N (force), mm (length), MPa (stress), N·mm (torque).
 
-Reference equations:
-  VDI 2230 (2014) Eq. (5.1):  F_M = M_A / (K · d)
-  VDI 2230 (2014) Table A5:   α_A tightening scatter factors
-  VDI 2230 (2014) Table 5.4:  f_Z embedding relaxation
+Method:
+  1. Torque → nominal preload via the nut-factor relation
+         F_M_nom = M_A / (K · d)
+     (NASA-STD-5020B / Bickford convention; VDI 2230 uses the full thread
+     torque decomposition — the K shortcut is equivalent for a given K).
+  2. Tightening scatter α_A (VDI 2230 Table A8) applied SYMMETRICALLY
+     about the nominal:
+         ε = (α_A − 1)/(α_A + 1)
+         F_M_max = F_M_nom·(1+ε),  F_M_min = F_M_nom·(1−ε)
+     so F_M_max/F_M_min = α_A.  If a K range (K_min, K_max) is supplied,
+     the envelope of both models is used (conservative in both directions).
+  3. Embedding relaxation (VDI 2230 §5.4.2):
+         F_Z = f_Z / (δ_S + δ_P)
+     with f_Z the sum of the per-region guide values (thread + head/nut
+     bearings + inner interfaces) from VDI 2230 Table 5.4.
+  4. Net minimum preload: F_V_min = F_M_min − F_Z.
 """
 from __future__ import annotations
 import math
-from typing import Optional
+from typing import Literal, Optional
 from boltsizer.models.bolt import Bolt
 from boltsizer.models.joint import BoltCircle
 from boltsizer.models.results import PreloadResult
@@ -19,62 +31,88 @@ from boltsizer.standards.nut_factors import get_scatter_factor
 # ---------------------------------------------------------------------------
 # LaTeX formula strings (kept adjacent to calculations for traceability)
 # ---------------------------------------------------------------------------
-FORMULA_TORQUE_TO_PRELOAD = r"F_M = \frac{M_A}{K \cdot d}"
-FORMULA_SCATTER_MIN = r"F_{M,\min} = \frac{F_{M,\max}}{\alpha_A}"
-FORMULA_EMBEDDING = r"F_Z = \frac{f_Z \cdot E_S \cdot A_S}{l_K}"
+FORMULA_TORQUE_TO_PRELOAD = r"F_{M,nom} = \frac{M_A}{K \cdot d}"
+FORMULA_SCATTER = (
+    r"F_{M,\max/\min} = F_{M,nom}\,(1 \pm \varepsilon),\quad"
+    r"\varepsilon = \frac{\alpha_A - 1}{\alpha_A + 1}"
+)
+FORMULA_EMBEDDING = r"F_Z = \frac{f_Z}{\delta_S + \delta_P}"
 FORMULA_NET_PRELOAD_MIN = r"F_{V,\min} = F_{M,\min} - F_Z"
 
-# VDI 2230 Table 5.4 — Embedding displacement f_Z [mm]
-# Rows: number of mating surfaces (1..5)
-# Cols: surface roughness Rz [μm] thresholds: ≤ 4, ≤ 10, ≤ 16, ≤ 40
-_EMBEDDING_TABLE: dict = {
-    # n_interfaces: {Rz_threshold: f_Z [mm]}
-    1: {4: 0.003, 10: 0.005, 16: 0.010, 40: 0.020, 9999: 0.025},
-    2: {4: 0.005, 10: 0.010, 16: 0.015, 40: 0.025, 9999: 0.035},
-    3: {4: 0.008, 10: 0.015, 16: 0.020, 40: 0.035, 9999: 0.050},
-    4: {4: 0.010, 10: 0.020, 16: 0.025, 40: 0.045, 9999: 0.065},
-    5: {4: 0.013, 10: 0.025, 16: 0.030, 40: 0.055, 9999: 0.075},
+# ---------------------------------------------------------------------------
+# VDI 2230 Table 5.4 — embedding amount guide values f_Z [μm] per region.
+# Rows: Rz band upper limit [μm]; columns per loading type:
+#   (thread, per head/nut bearing surface, per inner interface)
+# ---------------------------------------------------------------------------
+_EMBEDDING_GUIDE_UM = {
+    # Rz <  10 μm
+    10.0:  {"axial": (3.0, 2.5, 1.5), "shear": (3.0, 3.0, 2.0)},
+    # 10 ≤ Rz < 40 μm
+    40.0:  {"axial": (3.0, 3.0, 2.0), "shear": (3.0, 4.5, 2.5)},
+    # 40 ≤ Rz < 160 μm
+    160.0: {"axial": (3.0, 4.0, 3.0), "shear": (3.0, 6.5, 3.5)},
 }
 
 
-def _get_embedding_displacement(num_interfaces: int, rz_um: float) -> float:
-    """Look up embedding displacement f_Z [mm] from VDI 2230 Table 5.4.
+def _get_embedding_displacement(
+    num_inner_interfaces: int,
+    rz_um: float,
+    loading_type: Literal["axial", "shear"] = "axial",
+) -> float:
+    """Total embedding displacement f_Z [mm] from VDI 2230 Table 5.4 guide values.
 
-    VDI 2230 (2014) Table 5.4.
+    f_Z = f_thread + 2·f_bearing (head + nut) + n_inner·f_interface
 
     Args:
-        num_interfaces: Number of mating/embedding surfaces (1–5).
-        rz_um: Mean surface roughness Rz [μm].
+        num_inner_interfaces: Number of interfaces BETWEEN clamped parts
+            (n_parts − 1; washers count as parts).
+        rz_um: Governing surface roughness Rz [μm].
+        loading_type: "axial" (tension/compression) or "shear"
+            (transverse-loaded joints embed more — conservative choice
+            whenever the joint carries shear).
 
     Returns:
         f_Z in mm.
     """
-    n = max(1, min(num_interfaces, 5))
-    row = _EMBEDDING_TABLE[n]
-    for threshold, f_z in sorted(row.items()):
-        if rz_um <= threshold:
-            return f_z
-    return max(row.values())
+    n_inner = max(0, num_inner_interfaces)
+    for rz_limit in sorted(_EMBEDDING_GUIDE_UM):
+        if rz_um < rz_limit:
+            f_th, f_head, f_inner = _EMBEDDING_GUIDE_UM[rz_limit][loading_type]
+            break
+    else:
+        f_th, f_head, f_inner = _EMBEDDING_GUIDE_UM[160.0][loading_type]
+
+    f_Z_um = f_th + 2.0 * f_head + n_inner * f_inner
+    return f_Z_um * 1e-3  # μm → mm
 
 
 def calculate_preload(
     bolt_circle: BoltCircle,
     grip_length: float,
+    total_compliance: Optional[float] = None,
+    num_inner_interfaces: Optional[int] = None,
+    embedding_loading_type: Literal["axial", "shear"] = "axial",
 ) -> PreloadResult:
     """Calculate bolt preload including scatter and embedding relaxation.
 
     Steps:
       1. Convert assembly torque to nominal preload (or use direct target).
-         VDI 2230 (2014) Eq. (5.1): F_M = M_A / (K · d)
-      2. Apply tightening scatter to get min/max preload.
-         VDI 2230 (2014) Table A5: F_M_min = F_M_max / α_A
-      3. Compute embedding relaxation force.
-         VDI 2230 (2014) Table 5.4: F_Z = f_Z · E_S · A_S / l_K
-      4. Net minimum preload: F_V_min = F_M_min - F_Z.
+      2. Apply symmetric tightening scatter (and K-range envelope if given).
+      3. Compute embedding relaxation force F_Z = f_Z/(δ_S + δ_P).
+      4. Net minimum preload: F_V_min = F_M_min − F_Z.
 
     Args:
         bolt_circle: BoltCircle specification including tightening parameters.
         grip_length: Total clamped stack (grip) length l_K [mm].
+        total_compliance: δ_S + δ_P of the joint [mm/N].  REQUIRED for a
+            correct embedding loss; when None, a bolt-only stiffness
+            fallback is used (overestimates F_Z — conservative; only
+            intended for previews without joint definition).
+        num_inner_interfaces: Interfaces between clamped parts
+            (n_layers − 1).  When None, derived from
+            bolt_circle.num_mating_surfaces − 1 (treated as a part count).
+        embedding_loading_type: "axial" or "shear" — governs the Table 5.4
+            guide values (use "shear" when the joint carries shear).
 
     Returns:
         PreloadResult with all intermediate values.
@@ -86,28 +124,46 @@ def calculate_preload(
     E_S = bolt.material.youngs_modulus       # [MPa]
 
     # --- Step 1: Nominal preload ---
-    if bolt_circle.assembly_torque > 0:
-        # VDI 2230 (2014) Eq. (5.1)
+    torque_mode = bolt_circle.assembly_torque > 0
+    if torque_mode:
         F_M_nominal = bolt_circle.assembly_torque / (K * d)
     else:
         # Direct target preload mode
         F_M_nominal = bolt_circle.target_preload
-    F_M_max = F_M_nominal  # Target torque achieves maximum preload
 
-    # --- Step 2: Tightening scatter ---
-    # VDI 2230 (2014) Table A5
+    # --- Step 2: Tightening scatter (symmetric about nominal) ---
     alpha_A = get_scatter_factor(bolt_circle.tightening_method)
-    F_M_min = F_M_max / alpha_A
+    eps = (alpha_A - 1.0) / (alpha_A + 1.0)
+    F_M_max = F_M_nominal * (1.0 + eps)
+    F_M_min = F_M_nominal * (1.0 - eps)
+
+    # K-range envelope: low friction → higher preload at same torque,
+    # high friction → lower preload.  Take the wider (conservative) bounds.
+    if torque_mode:
+        K_min = bolt_circle.nut_factor_K_min
+        K_max = bolt_circle.nut_factor_K_max
+        if K_min is not None and K_min > 0:
+            F_M_max = max(F_M_max, bolt_circle.assembly_torque / (K_min * d))
+        if K_max is not None and K_max > 0:
+            F_M_min = min(F_M_min, bolt_circle.assembly_torque / (K_max * d))
 
     # --- Step 3: Embedding relaxation ---
-    # VDI 2230 (2014) Table 5.4
+    if num_inner_interfaces is None:
+        num_inner_interfaces = max(0, bolt_circle.num_mating_surfaces - 1)
     f_Z = _get_embedding_displacement(
-        bolt_circle.num_mating_surfaces,
+        num_inner_interfaces,
         bolt_circle.surface_roughness_Rz,
+        embedding_loading_type,
     )
-    # Embedding loss force: F_Z = f_Z * E_S * A_S / l_K
-    # Derived from δ = F·l/(E·A) → F = δ·E·A/l
-    F_Z = (f_Z * E_S * A_s / grip_length) if grip_length > 0 else 0.0
+    # F_Z = f_Z / (δ_S + δ_P)   (VDI 2230 §5.4.2)
+    if total_compliance is not None and total_compliance > 0:
+        F_Z = f_Z / total_compliance
+    elif grip_length > 0:
+        # Bolt-only stiffness fallback (preview use only): overestimates
+        # the loss because the clamped-part compliance is neglected.
+        F_Z = f_Z * E_S * A_s / grip_length
+    else:
+        F_Z = 0.0
 
     # --- Step 4: Net minimum preload ---
     F_preload_min = max(0.0, F_M_min - F_Z)

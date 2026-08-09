@@ -47,6 +47,7 @@ export interface PreloadPreviewReq {
   num_mating_surfaces: number;
   surface_roughness_Rz: number;
   grip_length_mm: number;
+  layers?: { material: string; thickness_mm: number; E: number }[];
 }
 
 export const previewPreload = (req: PreloadPreviewReq) =>
