@@ -1,5 +1,13 @@
 import { create } from "zustand";
-import type { BoltConfig, JointConfig, LoadCase, AnalysisResults } from "../types";
+import { persist } from "zustand/middleware";
+import type {
+  BoltConfig,
+  JointConfig,
+  LoadCase,
+  AnalysisResults,
+  FosConfig,
+  ReportMeta,
+} from "../types";
 import { runAnalysis, buildAnalyzeReq } from "../api/client";
 
 export interface AppState {
@@ -7,7 +15,11 @@ export interface AppState {
   boltConfig: BoltConfig;
   jointConfig: JointConfig;
   loadCases: LoadCase[];
+  fos: FosConfig;
+  reportMeta: ReportMeta;
   results: AnalysisResults | null;
+  /** Serialized request behind the currently displayed results (staleness). */
+  lastRunKey: string | null;
   isAnalyzing: boolean;
   analyzeError: string | null;
   standard: "VDI" | "ECSS";
@@ -20,8 +32,11 @@ export interface AppState {
   removeLoadCase: (index: number) => void;
   updateLoadCase: (index: number, lc: Partial<LoadCase>) => void;
   setStandard: (s: "VDI" | "ECSS") => void;
+  setFos: (f: Partial<FosConfig>) => void;
+  setReportMeta: (m: Partial<ReportMeta>) => void;
   runAnalysis: () => Promise<void>;
   clearResults: () => void;
+  resetAll: () => void;
   importConfig: (cfg: Partial<AppState>) => void;
 }
 
@@ -31,6 +46,10 @@ const DEFAULT_BOLT: BoltConfig = {
   shank_length_mm: 20,
   threaded_length_mm: 15,
   nut_factor_K: 0.16,
+  nut_factor_K_min: 0.14,
+  nut_factor_K_max: 0.18,
+  use_friction_range: true,
+  tool_scatter_pct: 5,
   assembly_torque_Nmm: 85000,
   target_preload_N: 30000,
   use_target_preload: false,
@@ -61,61 +80,148 @@ const DEFAULT_LOAD_CASE: LoadCase = {
   load_factor: 1.5,
 };
 
-export const useAppStore = create<AppState>((set, get) => ({
-  currentStep: 0,
-  boltConfig: DEFAULT_BOLT,
-  jointConfig: DEFAULT_JOINT,
-  loadCases: [{ ...DEFAULT_LOAD_CASE }],
-  results: null,
-  isAnalyzing: false,
-  analyzeError: null,
-  standard: "VDI",
+const DEFAULT_FOS: FosConfig = {
+  fos_yield: null,
+  fos_ultimate: null,
+  fos_separation: null,
+  fos_slip: null,
+  fos_yield_installation: 1.0,
+  fos_ultimate_installation: 1.0,
+};
 
-  setCurrentStep: (step) => set({ currentStep: step }),
+const DEFAULT_META: ReportMeta = {
+  project_name: "",
+  revision: "A",
+  engineer_name: "",
+};
 
-  setBoltConfig: (cfg) =>
-    set((s) => ({ boltConfig: { ...s.boltConfig, ...cfg } })),
+/** Build the request key used for staleness detection. */
+export function requestKey(s: {
+  boltConfig: BoltConfig;
+  jointConfig: JointConfig;
+  loadCases: LoadCase[];
+  standard: "VDI" | "ECSS";
+  fos: FosConfig;
+}): string {
+  return JSON.stringify(
+    buildAnalyzeReq(s.boltConfig, s.jointConfig, s.loadCases, s.standard, s.fos)
+  );
+}
 
-  setJointConfig: (cfg) =>
-    set((s) => ({ jointConfig: { ...s.jointConfig, ...cfg } })),
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      currentStep: 0,
+      boltConfig: DEFAULT_BOLT,
+      jointConfig: DEFAULT_JOINT,
+      loadCases: [{ ...DEFAULT_LOAD_CASE }],
+      fos: { ...DEFAULT_FOS },
+      reportMeta: { ...DEFAULT_META },
+      results: null,
+      lastRunKey: null,
+      isAnalyzing: false,
+      analyzeError: null,
+      standard: "VDI",
 
-  setLoadCases: (lcs) => set({ loadCases: lcs }),
+      setCurrentStep: (step) => set({ currentStep: step }),
 
-  addLoadCase: () =>
-    set((s) => ({
-      loadCases: [
-        ...s.loadCases,
-        { ...DEFAULT_LOAD_CASE, case_name: `LC${s.loadCases.length + 1}` },
-      ],
-    })),
+      setBoltConfig: (cfg) =>
+        set((s) => ({ boltConfig: { ...s.boltConfig, ...cfg } })),
 
-  removeLoadCase: (index) =>
-    set((s) => ({
-      loadCases: s.loadCases.filter((_, i) => i !== index),
-    })),
+      setJointConfig: (cfg) =>
+        set((s) => ({ jointConfig: { ...s.jointConfig, ...cfg } })),
 
-  updateLoadCase: (index, lc) =>
-    set((s) => ({
-      loadCases: s.loadCases.map((c, i) => (i === index ? { ...c, ...lc } : c)),
-    })),
+      setLoadCases: (lcs) => set({ loadCases: lcs }),
 
-  setStandard: (standard) => set({ standard }),
+      addLoadCase: () =>
+        set((s) => ({
+          loadCases: [
+            ...s.loadCases,
+            { ...DEFAULT_LOAD_CASE, case_name: `LC${s.loadCases.length + 1}` },
+          ],
+        })),
 
-  runAnalysis: async () => {
-    const { boltConfig, jointConfig, loadCases, standard } = get();
-    set({ isAnalyzing: true, analyzeError: null, results: null });
-    try {
-      const req = buildAnalyzeReq(boltConfig, jointConfig, loadCases, standard);
-      const results = await runAnalysis(req);
-      set({ results, isAnalyzing: false, currentStep: 3 });
-    } catch (e: unknown) {
-      const msg =
-        e instanceof Error ? e.message : "Analysis failed — check inputs";
-      set({ analyzeError: msg, isAnalyzing: false });
+      removeLoadCase: (index) =>
+        set((s) => ({
+          loadCases: s.loadCases.filter((_, i) => i !== index),
+        })),
+
+      updateLoadCase: (index, lc) =>
+        set((s) => ({
+          loadCases: s.loadCases.map((c, i) => (i === index ? { ...c, ...lc } : c)),
+        })),
+
+      setStandard: (standard) => set({ standard }),
+
+      setFos: (f) => set((s) => ({ fos: { ...s.fos, ...f } })),
+
+      setReportMeta: (m) => set((s) => ({ reportMeta: { ...s.reportMeta, ...m } })),
+
+      runAnalysis: async () => {
+        const { boltConfig, jointConfig, loadCases, standard, fos, reportMeta } = get();
+        set({ isAnalyzing: true, analyzeError: null });
+        try {
+          const req = buildAnalyzeReq(boltConfig, jointConfig, loadCases, standard, fos, reportMeta);
+          const results = await runAnalysis(req);
+          set({
+            results,
+            isAnalyzing: false,
+            lastRunKey: requestKey({ boltConfig, jointConfig, loadCases, standard, fos }),
+          });
+        } catch (e: unknown) {
+          const msg =
+            e instanceof Error ? e.message : "Analysis failed — check inputs";
+          set({ analyzeError: msg, isAnalyzing: false });
+        }
+      },
+
+      clearResults: () => set({ results: null, lastRunKey: null }),
+
+      resetAll: () =>
+        set({
+          currentStep: 0,
+          boltConfig: { ...DEFAULT_BOLT },
+          jointConfig: { ...DEFAULT_JOINT, layers: [{ ...DEFAULT_JOINT.layers[0] }] },
+          loadCases: [{ ...DEFAULT_LOAD_CASE }],
+          fos: { ...DEFAULT_FOS },
+          reportMeta: { ...DEFAULT_META },
+          results: null,
+          lastRunKey: null,
+          analyzeError: null,
+          standard: "VDI",
+        }),
+
+      importConfig: (cfg) => set((s) => ({ ...s, ...cfg })),
+    }),
+    {
+      name: "boltsizer-v2",
+      version: 2,
+      // Results are cheap to recompute and can be large — don't persist them.
+      partialize: (s) => ({
+        currentStep: Math.min(s.currentStep, 2),
+        boltConfig: s.boltConfig,
+        jointConfig: s.jointConfig,
+        loadCases: s.loadCases,
+        fos: s.fos,
+        reportMeta: s.reportMeta,
+        standard: s.standard,
+      }),
     }
-  },
+  )
+);
 
-  clearResults: () => set({ results: null }),
-
-  importConfig: (cfg) => set((s) => ({ ...s, ...cfg })),
-}));
+/** True when inputs differ from the run behind the displayed results. */
+export function useResultsStale(): boolean {
+  return useAppStore((s) => {
+    if (!s.results || !s.lastRunKey) return false;
+    return (
+      requestKey({
+        boltConfig: s.boltConfig,
+        jointConfig: s.jointConfig,
+        loadCases: s.loadCases,
+        standard: s.standard,
+        fos: s.fos,
+      }) !== s.lastRunKey
+    );
+  });
+}

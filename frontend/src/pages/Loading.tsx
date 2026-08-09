@@ -1,4 +1,4 @@
-import { FormGroup, NumericInput, Button, InputGroup, Callout, Spinner, HTMLSelect } from "@blueprintjs/core";
+import { FormGroup, NumericInput, Button, InputGroup, Callout, Spinner } from "@blueprintjs/core";
 import { useAppStore } from "../store/useAppStore";
 
 export function Loading() {
@@ -12,7 +12,6 @@ export function Loading() {
     analyzeError,
     setCurrentStep,
     standard,
-    setStandard,
   } = useAppStore();
 
   const handleRunAnalysis = async () => {
@@ -25,17 +24,11 @@ export function Loading() {
         <div>
           <div className="section-heading" style={{ marginTop: 0, marginBottom: 4 }}>Load Cases</div>
           <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
-            Define one or more load cases. All cases are analysed independently.
+            Define one or more load cases. All cases are analysed independently
+            under the <strong>{standard}</strong> convention (change it in the header).
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <FormGroup label="Standard" inline style={{ marginBottom: 0 }}>
-            <HTMLSelect
-              value={standard}
-              onChange={(e) => setStandard(e.target.value as "VDI" | "ECSS")}
-              options={["VDI", "ECSS"]}
-            />
-          </FormGroup>
           <Button icon="plus" minimal intent="primary" onClick={addLoadCase}>
             Add Load Case
           </Button>
@@ -81,15 +74,18 @@ export function Loading() {
                 <NumericInput
                   value={lc.axial_force_N}
                   stepSize={100}
+                  majorStepSize={1000}
                   onValueChange={(v) => updateLoadCase(i, { axial_force_N: v })}
                   fill
                 />
               </FormGroup>
-              <FormGroup label="Bending M_B [N·mm]" style={{ marginBottom: 0 }}>
+              <FormGroup label="Bending M_B [N·m]" style={{ marginBottom: 0 }}>
                 <NumericInput
-                  value={lc.bending_moment_Nmm}
-                  stepSize={1000}
-                  onValueChange={(v) => updateLoadCase(i, { bending_moment_Nmm: v })}
+                  value={lc.bending_moment_Nmm / 1000}
+                  stepSize={1}
+                  minorStepSize={0.1}
+                  majorStepSize={10}
+                  onValueChange={(v) => !Number.isNaN(v) && updateLoadCase(i, { bending_moment_Nmm: Math.round(v * 1000) })}
                   fill
                 />
               </FormGroup>
@@ -97,15 +93,18 @@ export function Loading() {
                 <NumericInput
                   value={lc.shear_force_N}
                   stepSize={100}
+                  majorStepSize={1000}
                   onValueChange={(v) => updateLoadCase(i, { shear_force_N: v })}
                   fill
                 />
               </FormGroup>
-              <FormGroup label="Torsion M_T [N·mm]" style={{ marginBottom: 0 }}>
+              <FormGroup label="Torsion M_T [N·m]" style={{ marginBottom: 0 }}>
                 <NumericInput
-                  value={lc.torsion_Nmm}
-                  stepSize={1000}
-                  onValueChange={(v) => updateLoadCase(i, { torsion_Nmm: v })}
+                  value={lc.torsion_Nmm / 1000}
+                  stepSize={1}
+                  minorStepSize={0.1}
+                  majorStepSize={10}
+                  onValueChange={(v) => !Number.isNaN(v) && updateLoadCase(i, { torsion_Nmm: Math.round(v * 1000) })}
                   fill
                 />
               </FormGroup>

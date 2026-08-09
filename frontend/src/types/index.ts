@@ -50,6 +50,10 @@ export interface BoltConfig {
   shank_length_mm: number;
   threaded_length_mm: number;
   nut_factor_K: number;
+  nut_factor_K_min: number | null;
+  nut_factor_K_max: number | null;
+  use_friction_range: boolean;
+  tool_scatter_pct: number; // percent, e.g. 5 = ±5%
   assembly_torque_Nmm: number;
   target_preload_N: number;
   use_target_preload: boolean;
@@ -57,6 +61,22 @@ export interface BoltConfig {
   num_mating_surfaces: number;
   surface_roughness_Rz: number;
   coating: string;
+}
+
+/** Factors of safety; null = use the selected standard's default. */
+export interface FosConfig {
+  fos_yield: number | null;
+  fos_ultimate: number | null;
+  fos_separation: number | null;
+  fos_slip: number | null;
+  fos_yield_installation: number;
+  fos_ultimate_installation: number;
+}
+
+export interface ReportMeta {
+  project_name: string;
+  revision: string;
+  engineer_name: string;
 }
 
 export interface JointConfig {

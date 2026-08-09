@@ -10,6 +10,8 @@ import type {
   BoltConfig,
   JointConfig,
   LoadCase,
+  FosConfig,
+  ReportMeta,
 } from "../types";
 
 const api = axios.create({ baseURL: "" });
@@ -41,6 +43,9 @@ export interface PreloadPreviewReq {
   shank_length_mm: number;
   threaded_length_mm: number;
   nut_factor_K: number;
+  nut_factor_K_min?: number | null;
+  nut_factor_K_max?: number | null;
+  tool_scatter_pct?: number | null;
   assembly_torque_Nmm: number;
   target_preload_N: number;
   tightening_method: string;
@@ -86,6 +91,9 @@ export interface AnalyzeReq {
   shank_length_mm: number;
   threaded_length_mm: number;
   nut_factor_K: number;
+  nut_factor_K_min?: number | null;
+  nut_factor_K_max?: number | null;
+  tool_scatter_pct?: number | null;
   assembly_torque_Nmm: number;
   target_preload_N: number;
   tightening_method: string;
@@ -100,22 +108,35 @@ export interface AnalyzeReq {
   load_intro_factor_n: number;
   plate_thickness_mm: number;
   plate_yield_strength_MPa: number;
+  fos_yield?: number | null;
+  fos_ultimate?: number | null;
+  fos_separation?: number | null;
+  fos_slip?: number | null;
+  fos_yield_installation?: number;
+  fos_ultimate_installation?: number;
   load_cases: LoadCase[];
   standard: "VDI" | "ECSS";
+  report_meta?: ReportMeta | null;
 }
 
 export function buildAnalyzeReq(
   bolt: BoltConfig,
   joint: JointConfig,
   loadCases: LoadCase[],
-  standard: "VDI" | "ECSS" = "VDI"
+  standard: "VDI" | "ECSS" = "VDI",
+  fos?: FosConfig,
+  reportMeta?: ReportMeta
 ): AnalyzeReq {
+  const useRange = bolt.use_friction_range && bolt.nut_factor_K_min != null;
   return {
     designation: bolt.designation,
     grade: bolt.grade,
     shank_length_mm: bolt.shank_length_mm,
     threaded_length_mm: bolt.threaded_length_mm,
     nut_factor_K: bolt.nut_factor_K,
+    nut_factor_K_min: useRange ? bolt.nut_factor_K_min : null,
+    nut_factor_K_max: useRange ? bolt.nut_factor_K_max : null,
+    tool_scatter_pct: useRange ? bolt.tool_scatter_pct / 100 : null,
     assembly_torque_Nmm: bolt.use_target_preload ? 0 : bolt.assembly_torque_Nmm,
     target_preload_N: bolt.use_target_preload ? bolt.target_preload_N : 0,
     tightening_method: bolt.tightening_method,
@@ -130,8 +151,15 @@ export function buildAnalyzeReq(
     load_intro_factor_n: joint.load_intro_factor_n,
     plate_thickness_mm: joint.plate_thickness_mm,
     plate_yield_strength_MPa: joint.plate_yield_strength_MPa,
+    fos_yield: fos?.fos_yield ?? null,
+    fos_ultimate: fos?.fos_ultimate ?? null,
+    fos_separation: fos?.fos_separation ?? null,
+    fos_slip: fos?.fos_slip ?? null,
+    fos_yield_installation: fos?.fos_yield_installation ?? 1.0,
+    fos_ultimate_installation: fos?.fos_ultimate_installation ?? 1.0,
     load_cases: loadCases,
     standard,
+    report_meta: reportMeta ?? null,
   };
 }
 

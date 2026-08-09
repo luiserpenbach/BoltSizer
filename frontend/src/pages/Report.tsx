@@ -1,17 +1,20 @@
 import { useRef, useState } from "react";
-import { Button, Callout, FileInput } from "@blueprintjs/core";
+import { Button, Callout, FileInput, FormGroup, InputGroup } from "@blueprintjs/core";
 import { useAppStore } from "../store/useAppStore";
 import { exportJson, exportPdf, importJson, buildAnalyzeReq } from "../api/client";
 import type { AnalyzeReq } from "../api/client";
 
 export function Report() {
-  const { boltConfig, jointConfig, loadCases, results, importConfig, setCurrentStep, standard } = useAppStore();
+  const {
+    boltConfig, jointConfig, loadCases, results, importConfig, setCurrentStep,
+    standard, fos, reportMeta, setReportMeta,
+  } = useAppStore();
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const req = buildAnalyzeReq(boltConfig, jointConfig, loadCases, standard);
+  const req = buildAnalyzeReq(boltConfig, jointConfig, loadCases, standard, fos, reportMeta);
 
   const handleExportPdf = async () => {
     setExporting(true);
@@ -52,6 +55,10 @@ export function Report() {
           shank_length_mm: parsed.shank_length_mm,
           threaded_length_mm: parsed.threaded_length_mm,
           nut_factor_K: parsed.nut_factor_K,
+          nut_factor_K_min: parsed.nut_factor_K_min ?? null,
+          nut_factor_K_max: parsed.nut_factor_K_max ?? null,
+          use_friction_range: parsed.nut_factor_K_min != null,
+          tool_scatter_pct: (parsed.tool_scatter_pct ?? 0.05) * 100,
           assembly_torque_Nmm: parsed.assembly_torque_Nmm,
           target_preload_N: parsed.target_preload_N,
           use_target_preload: parsed.target_preload_N > 0 && parsed.assembly_torque_Nmm === 0,
@@ -82,7 +89,43 @@ export function Report() {
 
   return (
     <div>
-      <div className="section-heading" style={{ marginTop: 0 }}>Export</div>
+      <div className="section-heading" style={{ marginTop: 0 }}>Report Metadata</div>
+      <div
+        style={{
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border-color)",
+          borderRadius: 3,
+          padding: 16,
+          marginBottom: 24,
+          display: "grid",
+          gridTemplateColumns: "2fr 1fr 2fr",
+          gap: 12,
+        }}
+      >
+        <FormGroup label="Project name" style={{ marginBottom: 0 }}>
+          <InputGroup
+            value={reportMeta.project_name}
+            placeholder="e.g. Chamber flange QM"
+            onChange={(e) => setReportMeta({ project_name: e.target.value })}
+          />
+        </FormGroup>
+        <FormGroup label="Revision" style={{ marginBottom: 0 }}>
+          <InputGroup
+            value={reportMeta.revision}
+            placeholder="A"
+            onChange={(e) => setReportMeta({ revision: e.target.value })}
+          />
+        </FormGroup>
+        <FormGroup label="Engineer" style={{ marginBottom: 0 }}>
+          <InputGroup
+            value={reportMeta.engineer_name}
+            placeholder="Name for the title block"
+            onChange={(e) => setReportMeta({ engineer_name: e.target.value })}
+          />
+        </FormGroup>
+      </div>
+
+      <div className="section-heading">Export</div>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
         <div

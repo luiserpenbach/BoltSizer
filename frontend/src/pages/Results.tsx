@@ -5,7 +5,7 @@ import { CalcStepCard } from "../components/shared/CalcStepCard";
 import { MarginBar } from "../components/charts/MarginBar";
 import { ForceWaterfall } from "../components/charts/ForceWaterfall";
 import { BoltCircleViz } from "../components/charts/BoltCircleViz";
-import { useAppStore } from "../store/useAppStore";
+import { useAppStore, useResultsStale } from "../store/useAppStore";
 import type { BoltResults } from "../types";
 
 function CaseResults({ caseResult }: { caseResult: BoltResults }) {
@@ -51,7 +51,7 @@ function CaseResults({ caseResult }: { caseResult: BoltResults }) {
           <div className="metric-value mono">
             {caseResult.preload.F_preload_min.toLocaleString(undefined, { maximumFractionDigits: 0 })} N
           </div>
-          <div className="metric-sub">After embedding</div>
+          <div className="metric-sub">After all preload losses</div>
         </div>
         <div className="summary-card">
           <div className="metric-label">Max Bolt Load</div>
@@ -209,7 +209,8 @@ function CaseResults({ caseResult }: { caseResult: BoltResults }) {
 }
 
 export function Results() {
-  const { results, setCurrentStep } = useAppStore();
+  const { results, setCurrentStep, runAnalysis, isAnalyzing } = useAppStore();
+  const stale = useResultsStale();
 
   if (!results) {
     return (
@@ -232,6 +233,19 @@ export function Results() {
 
   return (
     <div>
+      {stale && (
+        <Callout intent="warning" icon="outdated" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span>
+              Inputs have changed since this analysis was run — the results below
+              may not match the current configuration.
+            </span>
+            <Button small intent="warning" icon="refresh" loading={isAnalyzing} onClick={() => runAnalysis()}>
+              Re-run analysis
+            </Button>
+          </div>
+        </Callout>
+      )}
       {case_results.length === 1 ? (
         <CaseResults caseResult={case_results[0]} />
       ) : (

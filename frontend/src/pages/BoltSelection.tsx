@@ -57,12 +57,16 @@ export function BoltSelection() {
     if (!boltConfig.designation || !boltConfig.grade) return;
     setPreviewLoading(true);
     setPreviewError(null);
+    const useRange = boltConfig.use_friction_range && boltConfig.nut_factor_K_min != null;
     previewPreload({
       designation: boltConfig.designation,
       grade: boltConfig.grade,
       shank_length_mm: boltConfig.shank_length_mm,
       threaded_length_mm: boltConfig.threaded_length_mm,
       nut_factor_K: boltConfig.nut_factor_K,
+      nut_factor_K_min: useRange ? boltConfig.nut_factor_K_min : null,
+      nut_factor_K_max: useRange ? boltConfig.nut_factor_K_max : null,
+      tool_scatter_pct: useRange ? boltConfig.tool_scatter_pct / 100 : null,
       assembly_torque_Nmm: boltConfig.use_target_preload ? 0 : boltConfig.assembly_torque_Nmm,
       target_preload_N: boltConfig.use_target_preload ? boltConfig.target_preload_N : 0,
       tightening_method: boltConfig.tightening_method,
@@ -189,8 +193,13 @@ export function BoltSelection() {
             value={boltConfig.coating}
             onChange={(e) => {
               const c = e.target.value;
-              const kNom = coatings[c]?.k_nom ?? 0.16;
-              setBoltConfig({ coating: c, nut_factor_K: kNom });
+              const entry = coatings[c];
+              setBoltConfig({
+                coating: c,
+                nut_factor_K: entry?.k_nom ?? 0.16,
+                nut_factor_K_min: entry?.k_min ?? null,
+                nut_factor_K_max: entry?.k_max ?? null,
+              });
             }}
             options={Object.keys(coatings)}
             fill
@@ -204,10 +213,44 @@ export function BoltSelection() {
             max={0.5}
             stepSize={0.01}
             minorStepSize={0.001}
+            majorStepSize={0.05}
             onValueChange={(v) => setBoltConfig({ nut_factor_K: v })}
             fill
           />
         </FormGroup>
+
+        <Switch
+          checked={boltConfig.use_friction_range}
+          onChange={(e) => setBoltConfig({ use_friction_range: e.currentTarget.checked })}
+          labelElement={
+            <span>
+              Use coating friction range{" "}
+              {cdata && (
+                <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  (K {cdata.k_min.toFixed(2)}–{cdata.k_max.toFixed(2)} brackets the preload)
+                </span>
+              )}
+            </span>
+          }
+          style={{ marginBottom: 8 }}
+        />
+        {boltConfig.use_friction_range && (
+          <FormGroup
+            label="Torque tool scatter [±%]"
+            helperText="Composed with the friction extremes (ECSS convention): F_max = M·(1+s)/(K_min·d)."
+          >
+            <NumericInput
+              value={boltConfig.tool_scatter_pct}
+              min={0}
+              max={25}
+              stepSize={1}
+              minorStepSize={0.5}
+              majorStepSize={5}
+              onValueChange={(v) => !Number.isNaN(v) && setBoltConfig({ tool_scatter_pct: v })}
+              fill
+            />
+          </FormGroup>
+        )}
 
         <div className="section-heading">Tightening Method</div>
 
@@ -248,18 +291,28 @@ export function BoltSelection() {
               min={0}
               max={10000000}
               stepSize={100}
+              majorStepSize={1000}
               onValueChange={(v) => setBoltConfig({ target_preload_N: v })}
               fill
             />
           </FormGroup>
         ) : (
-          <FormGroup label="Assembly torque M_A [N·mm]">
+          <FormGroup
+            label="Assembly torque M_A [N·m]"
+            helperText={
+              <span className="mono" style={{ fontSize: 11 }}>
+                = {boltConfig.assembly_torque_Nmm.toLocaleString()} N·mm
+              </span>
+            }
+          >
             <NumericInput
-              value={boltConfig.assembly_torque_Nmm}
+              value={boltConfig.assembly_torque_Nmm / 1000}
               min={0}
-              max={100000000}
-              stepSize={500}
-              onValueChange={(v) => setBoltConfig({ assembly_torque_Nmm: v })}
+              max={100000}
+              stepSize={0.5}
+              minorStepSize={0.1}
+              majorStepSize={5}
+              onValueChange={(v) => !Number.isNaN(v) && setBoltConfig({ assembly_torque_Nmm: Math.round(v * 1000) })}
               fill
             />
           </FormGroup>
