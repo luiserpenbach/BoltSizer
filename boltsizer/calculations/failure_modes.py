@@ -130,30 +130,21 @@ def _thread_shear_stress(bolt: Bolt, M_G: float) -> float:
     return M_G / W_p if W_p > 0 else 0.0
 
 
-def check_yield_assembly(
+def _assembly_equivalent_stress(
     bolt: Bolt,
     preload: PreloadResult,
-    nut_factor_K: Optional[float] = None,
-) -> MarginOfSafety:
-    """Check bolt yield during assembly (tightening) — VDI 2230 §5.5.1.
+    nut_factor_K: Optional[float],
+) -> tuple:
+    """Assembly (installation) von Mises stress.
 
-    Equivalent stress: σ_red,M = sqrt(σ_M² + 3·τ_M²)
-    with σ_M = F_M_max/A_s and τ_M from the thread torque at F_M_max.
-    Allowable: ν·σ_y with ν = 0.9.
+    σ_red,M = sqrt(σ_M² + 3·τ_M²) with σ_M = F_M_max/A_s and τ_M from the
+    thread torque evaluated at the SAME friction state that produces
+    F_M_max (i.e. K_min when a friction range is given) — the physically
+    consistent worst pairing.
 
-    Args:
-        bolt: Bolt specification.
-        preload: Preload result containing F_M_max.
-        nut_factor_K: Nut factor for the thread-torque derivation.
-            None → torsion neglected (direct-tension tightening methods,
-            e.g. hydraulic tensioner).
-
-    Returns:
-        MarginOfSafety for yield at assembly.
+    Returns (sigma_red, sigma_M, tau_M).
     """
     A_s = bolt.geometry.stress_area
-    sigma_y = bolt.material.yield_strength
-
     F_applied = preload.F_M_max
     sigma_M = F_applied / A_s if A_s > 0 else 0.0
 
@@ -163,24 +154,91 @@ def check_yield_assembly(
     else:
         tau_M = 0.0
 
-    sigma_red = math.sqrt(sigma_M ** 2 + 3.0 * tau_M ** 2)
-    sigma_allow = _ASSEMBLY_UTILISATION * sigma_y
+    return math.sqrt(sigma_M ** 2 + 3.0 * tau_M ** 2), sigma_M, tau_M
 
-    ms = _ms(sigma_allow, sigma_red)
+
+def check_yield_assembly(
+    bolt: Bolt,
+    preload: PreloadResult,
+    nut_factor_K: Optional[float] = None,
+    nu: float = _ASSEMBLY_UTILISATION,
+    fos: float = 1.0,
+) -> MarginOfSafety:
+    """Check bolt yield during assembly (tightening) — VDI 2230 §5.5.1 /
+    ECSS-E-HB-32-23 §6.3.
+
+    Equivalent stress: σ_red,M = sqrt(σ_M² + 3·τ_M²)
+    Allowable: ν·σ_y.  VDI convention: ν = 0.9, FoS = 1.
+    ECSS convention: ν = 1.0 with an explicit installation FoS.
+
+    Args:
+        bolt: Bolt specification.
+        preload: Preload result containing F_M_max.
+        nut_factor_K: Nut factor for the thread-torque derivation — pass
+            the K matching the max-preload friction state (K_min when a
+            range is given).  None → torsion neglected (direct-tension
+            tightening methods, e.g. hydraulic tensioner).
+        nu: Utilisation factor on σ_y (0.9 VDI, 1.0 ECSS).
+        fos: Installation yield factor of safety.
+
+    Returns:
+        MarginOfSafety for yield at assembly.
+    """
+    sigma_y = bolt.material.yield_strength
+    sigma_red, sigma_M, tau_M = _assembly_equivalent_stress(bolt, preload, nut_factor_K)
+    sigma_allow = nu * sigma_y
+
+    ms = _ms(sigma_allow, sigma_red, fos)
     return MarginOfSafety(
         check_name="Yield at Assembly",
         value=ms,
         status=_status(ms),
         binding=False,
         allowable=sigma_allow,
-        applied=sigma_red,
+        applied=fos * sigma_red,
         unit="MPa",
         explanation=(
             f"Assembly von Mises stress {sigma_red:.1f} MPa "
             f"(σ_M = {sigma_M:.1f} MPa, τ_M = {tau_M:.1f} MPa) vs. "
-            f"allowable 0.9·σ_y = {sigma_allow:.1f} MPa at F_M_max = {F_applied:.0f} N."
+            f"allowable {nu:.2f}·σ_y = {sigma_allow:.1f} MPa "
+            f"at F_M_max = {preload.F_M_max:.0f} N (FoS {fos:.2f})."
         ),
         formula_latex=_LATEX["yield_assembly"],
+    )
+
+
+def check_ultimate_assembly(
+    bolt: Bolt,
+    preload: PreloadResult,
+    nut_factor_K: Optional[float] = None,
+    fos: float = 1.0,
+) -> MarginOfSafety:
+    """Check bolt ultimate strength during assembly (tightening).
+
+    Same stress state as the assembly yield check (full tightening
+    torsion retained — conservative; some tools partially relax the
+    torsion for the ultimate installation margin), compared against R_m.
+
+    Returns:
+        MarginOfSafety for ultimate at assembly.
+    """
+    sigma_u = bolt.material.uts
+    sigma_red, sigma_M, tau_M = _assembly_equivalent_stress(bolt, preload, nut_factor_K)
+
+    ms = _ms(sigma_u, sigma_red, fos)
+    return MarginOfSafety(
+        check_name="Ultimate at Assembly",
+        value=ms,
+        status=_status(ms),
+        binding=False,
+        allowable=sigma_u,
+        applied=fos * sigma_red,
+        unit="MPa",
+        explanation=(
+            f"Assembly von Mises stress {sigma_red:.1f} MPa (full tightening "
+            f"torsion retained) vs. R_m = {sigma_u:.1f} MPa (FoS {fos:.2f})."
+        ),
+        formula_latex=_LATEX["ultimate_combined"],
     )
 
 
@@ -743,6 +801,9 @@ def calculate_all_margins(
     shear_plane_in_threads: bool = True,
     tapped_engagement_length: Optional[float] = None,
     tapped_material_uts: Optional[float] = None,
+    assembly_nu: float = _ASSEMBLY_UTILISATION,
+    fos_yield_installation: float = 1.0,
+    fos_ultimate_installation: float = 1.0,
 ) -> List[MarginOfSafety]:
     """Calculate all failure mode margins for a single load case.
 
@@ -765,6 +826,10 @@ def calculate_all_margins(
         tapped_engagement_length: Engagement L_e [mm] for tapped joints
             (None = nut joint, stripping check skipped).
         tapped_material_uts: UTS of the tapped material [MPa].
+        assembly_nu: Utilisation factor ν on σ_y for the assembly yield
+            check (0.9 VDI, 1.0 ECSS).
+        fos_yield_installation / fos_ultimate_installation: Installation
+            factors of safety for the assembly checks.
 
     Returns:
         List of MarginOfSafety, sorted worst-first, with binding flag set.
@@ -775,8 +840,11 @@ def calculate_all_margins(
 
     margins: List[MarginOfSafety] = []
 
-    # 1. Yield at assembly (with tightening torsion)
-    margins.append(check_yield_assembly(bolt, preload, nut_factor_K))
+    # 1. Yield + ultimate at assembly (with tightening torsion)
+    margins.append(check_yield_assembly(
+        bolt, preload, nut_factor_K, assembly_nu, fos_yield_installation))
+    margins.append(check_ultimate_assembly(
+        bolt, preload, nut_factor_K, fos_ultimate_installation))
 
     # 2. Yield under working load
     margins.append(check_yield_combined(

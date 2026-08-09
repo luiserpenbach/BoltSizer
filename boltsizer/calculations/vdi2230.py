@@ -272,6 +272,8 @@ def run_vdi2230_analysis(
     shear_plane_in_threads: bool = True,
     tapped_engagement_length: Optional[float] = None,
     tapped_material_uts: Optional[float] = None,
+    fos_yield_installation: float = 1.0,
+    fos_ultimate_installation: float = 1.0,
 ) -> AnalysisResults:
     """Run the full VDI 2230 bolt sizing analysis for all load cases.
 
@@ -292,6 +294,8 @@ def run_vdi2230_analysis(
         shear_plane_in_threads: Shear plane location for shear checks.
         tapped_engagement_length: Engagement L_e [mm] for tapped joints.
         tapped_material_uts: UTS of tapped material [MPa].
+        fos_yield_installation / fos_ultimate_installation: Installation
+            factors of safety for the assembly checks (default 1.0).
 
     Returns:
         AnalysisResults with one BoltResults per load case.
@@ -323,7 +327,21 @@ def run_vdi2230_analysis(
     )
 
     torque_mode = bolt_circle.assembly_torque > 0
-    nut_factor_for_torsion = bolt_circle.nut_factor_K if torque_mode else None
+    if torque_mode:
+        # Pair the assembly torsion with the friction state that produces
+        # the maximum preload: K_min when a friction range is given (the
+        # physically consistent worst pairing), else nominal K.
+        nut_factor_for_torsion = (
+            bolt_circle.nut_factor_K_min
+            if bolt_circle.nut_factor_K_min
+            else bolt_circle.nut_factor_K
+        )
+    else:
+        nut_factor_for_torsion = None
+
+    # Assembly-check convention: VDI uses ν = 0.9 on σ_y; ECSS uses the
+    # full σ_y with explicit installation factors of safety.
+    assembly_nu = 1.0 if standard == "ECSS" else 0.9
 
     case_results: List[BoltResults] = []
 
@@ -381,6 +399,9 @@ def run_vdi2230_analysis(
             shear_plane_in_threads=shear_plane_in_threads,
             tapped_engagement_length=tapped_engagement_length,
             tapped_material_uts=tapped_material_uts,
+            assembly_nu=assembly_nu,
+            fos_yield_installation=fos_yield_installation,
+            fos_ultimate_installation=fos_ultimate_installation,
         )
 
         # --- Calculation steps for UI ---
