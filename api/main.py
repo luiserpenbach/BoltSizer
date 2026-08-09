@@ -106,12 +106,16 @@ class _BoltFields(BaseModel):
     nut_factor_K: float = 0.16
     nut_factor_K_min: Optional[float] = None
     nut_factor_K_max: Optional[float] = None
+    tool_scatter_pct: Optional[float] = None       # e.g. 0.05 for ±5% torque tool
     assembly_torque_Nmm: float = 0.0
     target_preload_N: float = 0.0
     tightening_method: str = "torque_wrench"
     num_mating_surfaces: int = 2
     surface_roughness_Rz: float = 6.3
+    embedding_percent_of_max: Optional[float] = None  # e.g. 0.05 → F_Z = 5%·F_M_max
     thread_rolled: Literal["before_ht", "after_ht"] = "before_ht"
+    head_bearing_diameter_mm: Optional[float] = None  # override d_w (e.g. DIN 912)
+    hole_diameter_mm: Optional[float] = None          # override clearance hole d_h
     custom_material: Optional[CustomMaterial] = None
 
 
@@ -178,6 +182,8 @@ class AnalyzeRequest(_BoltFields):
     fos_ultimate: Optional[float] = None
     fos_separation: Optional[float] = None
     fos_slip: Optional[float] = None
+    fos_yield_installation: float = 1.0
+    fos_ultimate_installation: float = 1.0
     # Load cases
     load_cases: List[LoadCaseRequest] = Field(default_factory=lambda: [LoadCaseRequest()])
     standard: Literal["VDI", "ECSS"] = "VDI"
@@ -217,7 +223,17 @@ def _build_material(req: _BoltFields, nominal_diameter: float) -> BoltMaterial:
 
 
 def _build_bolt_circle(req: _BoltFields, num_bolts: int = 1, pcd: float = 0.0) -> BoltCircle:
+    import math as _math
     geom = get_bolt_geometry(req.designation, req.shank_length_mm, req.threaded_length_mm)
+    # Optional geometry overrides (e.g. DIN 912 socket head d_w, custom hole)
+    if req.head_bearing_diameter_mm is not None and req.head_bearing_diameter_mm > 0:
+        geom.head_bearing_diameter = req.head_bearing_diameter_mm
+    if req.hole_diameter_mm is not None and req.hole_diameter_mm > 0:
+        geom.hole_diameter = req.hole_diameter_mm
+    if req.head_bearing_diameter_mm is not None or req.hole_diameter_mm is not None:
+        geom.head_bearing_area = _math.pi / 4 * (
+            geom.head_bearing_diameter ** 2 - geom.hole_diameter ** 2
+        )
     mat = _build_material(req, geom.nominal_diameter)
     bolt = Bolt(
         geometry=geom, material=mat, grade=req.grade,
@@ -235,6 +251,8 @@ def _build_bolt_circle(req: _BoltFields, num_bolts: int = 1, pcd: float = 0.0) -
         surface_roughness_Rz=req.surface_roughness_Rz,
         nut_factor_K_min=req.nut_factor_K_min,
         nut_factor_K_max=req.nut_factor_K_max,
+        tool_scatter_pct=req.tool_scatter_pct,
+        embedding_percent_of_max=req.embedding_percent_of_max,
     )
 
 
@@ -309,6 +327,8 @@ def _run_analysis(req: AnalyzeRequest):
         shear_plane_in_threads=req.shear_plane_in_threads,
         tapped_engagement_length=req.tapped_engagement_length_mm,
         tapped_material_uts=req.tapped_material_uts_MPa,
+        fos_yield_installation=req.fos_yield_installation,
+        fos_ultimate_installation=req.fos_ultimate_installation,
     )
     return bc, iface, results
 

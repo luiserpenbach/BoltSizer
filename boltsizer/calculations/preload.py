@@ -138,32 +138,41 @@ def calculate_preload(
     F_M_min = F_M_nominal * (1.0 - eps)
 
     # K-range envelope: low friction → higher preload at same torque,
-    # high friction → lower preload.  Take the wider (conservative) bounds.
+    # high friction → lower preload.  The torque-tool scatter (±s) is
+    # composed MULTIPLICATIVELY with the friction extremes (ECSS /
+    # SpaceBolt convention).  Take the wider (conservative) bounds.
     if torque_mode:
         K_min = bolt_circle.nut_factor_K_min
         K_max = bolt_circle.nut_factor_K_max
+        s = bolt_circle.tool_scatter_pct or 0.0
         if K_min is not None and K_min > 0:
-            F_M_max = max(F_M_max, bolt_circle.assembly_torque / (K_min * d))
+            F_M_max = max(F_M_max, bolt_circle.assembly_torque * (1.0 + s) / (K_min * d))
         if K_max is not None and K_max > 0:
-            F_M_min = min(F_M_min, bolt_circle.assembly_torque / (K_max * d))
+            F_M_min = min(F_M_min, bolt_circle.assembly_torque * (1.0 - s) / (K_max * d))
 
     # --- Step 3: Embedding relaxation ---
-    if num_inner_interfaces is None:
-        num_inner_interfaces = max(0, bolt_circle.num_mating_surfaces - 1)
-    f_Z = _get_embedding_displacement(
-        num_inner_interfaces,
-        bolt_circle.surface_roughness_Rz,
-        embedding_loading_type,
-    )
-    # F_Z = f_Z / (δ_S + δ_P)   (VDI 2230 §5.4.2)
-    if total_compliance is not None and total_compliance > 0:
-        F_Z = f_Z / total_compliance
-    elif grip_length > 0:
-        # Bolt-only stiffness fallback (preview use only): overestimates
-        # the loss because the clamped-part compliance is neglected.
-        F_Z = f_Z * E_S * A_s / grip_length
+    if bolt_circle.embedding_percent_of_max is not None:
+        # Percent-of-max-preload model (common ECSS/SpaceBolt assumption)
+        F_Z = bolt_circle.embedding_percent_of_max * F_M_max
+        # Back-derive the equivalent displacement for reporting
+        f_Z = F_Z * total_compliance if (total_compliance or 0) > 0 else 0.0
     else:
-        F_Z = 0.0
+        if num_inner_interfaces is None:
+            num_inner_interfaces = max(0, bolt_circle.num_mating_surfaces - 1)
+        f_Z = _get_embedding_displacement(
+            num_inner_interfaces,
+            bolt_circle.surface_roughness_Rz,
+            embedding_loading_type,
+        )
+        # F_Z = f_Z / (δ_S + δ_P)   (VDI 2230 §5.4.2)
+        if total_compliance is not None and total_compliance > 0:
+            F_Z = f_Z / total_compliance
+        elif grip_length > 0:
+            # Bolt-only stiffness fallback (preview use only): overestimates
+            # the loss because the clamped-part compliance is neglected.
+            F_Z = f_Z * E_S * A_s / grip_length
+        else:
+            F_Z = 0.0
 
     # --- Step 4: Net minimum preload ---
     F_preload_min = max(0.0, F_M_min - F_Z)

@@ -79,6 +79,13 @@ class BoltCircle:
             possible maximum preload (low friction → high preload).
         nut_factor_K_max: Optional upper K bound; envelope includes
             M_A/(K_max·d) as a possible minimum preload.
+        tool_scatter_pct: Torque-tool accuracy as a fraction (e.g. 0.05 for
+            ±5%).  Composed MULTIPLICATIVELY with the K-range bounds
+            (ECSS / SpaceBolt convention: friction extremes × tool
+            scatter).  Only used when a K range is given.
+        embedding_percent_of_max: Alternative embedding model — preload
+            loss as a fraction of the maximum preload (e.g. 0.05 for the
+            common 5% assumption).  None → VDI 2230 Table 5.4 guide values.
     """
     num_bolts: int
     bolt_circle_diameter: float          # [mm] PCD
@@ -91,6 +98,8 @@ class BoltCircle:
     surface_roughness_Rz: float = 6.3    # [μm]
     nut_factor_K_min: Optional[float] = None
     nut_factor_K_max: Optional[float] = None
+    tool_scatter_pct: Optional[float] = None
+    embedding_percent_of_max: Optional[float] = None
 
 
 @dataclass
