@@ -10,6 +10,7 @@ import {
   Collapse,
 } from "@blueprintjs/core";
 import { MetricCard } from "../components/shared/MetricCard";
+import { SuggestBoltsDialog } from "../components/SuggestBoltsDialog";
 import { useAppStore } from "../store/useAppStore";
 import { fetchBolts, fetchMaterials, fetchCoatings, fetchTighteningMethods, previewPreload, resolveHeadBearingDiameter } from "../api/client";
 import type { BoltLibraryEntry, MaterialEntry, CoatingEntry, TighteningMethod, PreloadPreview } from "../types";
@@ -44,6 +45,7 @@ export function BoltSelection() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [suggestOpen, setSuggestOpen] = useState(false);
 
   // Load reference data on mount
   useEffect(() => {
@@ -111,7 +113,13 @@ export function BoltSelection() {
     <div className="two-col">
       {/* ---- Left: inputs ---- */}
       <div>
-        <div className="section-heading">Bolt Specification</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div className="section-heading" style={{ margin: 0 }}>Bolt Specification</div>
+          <Button small minimal icon="search-around" intent="primary" onClick={() => setSuggestOpen(true)}>
+            Suggest size
+          </Button>
+        </div>
+        <SuggestBoltsDialog isOpen={suggestOpen} onClose={() => setSuggestOpen(false)} />
 
         <FormGroup label="Thread Standard">
           <HTMLSelect

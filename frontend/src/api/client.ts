@@ -216,6 +216,42 @@ export function buildAnalyzeReq(
 export const runAnalysis = (req: AnalyzeReq) =>
   api.post<AnalysisResults>("/api/analyze", req).then((r) => r.data);
 
+// ---- Sizing ----
+
+export interface TorqueWindowPoint {
+  torque: number;
+  min_ms: number;
+  governing: string;
+  margins: Record<string, number>;
+}
+
+export interface TorqueWindowResult {
+  points: TorqueWindowPoint[];
+  window: { t_lo: number; t_hi: number } | null;
+  recommended: { torque: number; min_ms: number; governing: string } | null;
+}
+
+export const fetchTorqueWindow = (req: AnalyzeReq, sweepPoints = 60) =>
+  api
+    .post<TorqueWindowResult>("/api/torque-window", { ...req, sweep_points: sweepPoints })
+    .then((r) => r.data);
+
+export interface BoltCandidate {
+  designation: string;
+  d: number;
+  A_s: number;
+  passes: boolean;
+  window: { t_lo: number; t_hi: number } | null;
+  recommended: { torque: number; min_ms: number; governing: string } | null;
+  best_min_ms: number | null;
+  governing: string;
+}
+
+export const fetchSuggestBolts = (req: AnalyzeReq) =>
+  api
+    .post<{ candidates: BoltCandidate[] }>("/api/suggest-bolts", req)
+    .then((r) => r.data.candidates);
+
 // ---- Export ----
 
 export const exportJson = async (req: AnalyzeReq) => {

@@ -27,7 +27,9 @@ from boltsizer.models.joint import BoltCircle, ClampedInterface, ClampedLayer, E
 from boltsizer.calculations.preload import calculate_preload
 from boltsizer.calculations.joint_stiffness import calculate_joint_stiffness
 from boltsizer.calculations.vdi2230 import run_vdi2230_analysis
+from boltsizer.calculations.sizing import torque_window, suggest_bolts
 from boltsizer.export.pdf_report import generate_pdf_report
+from boltsizer import __version__ as ENGINE_VERSION
 
 app = FastAPI(title="BoltSizer API", version="1.1.0")
 
@@ -303,18 +305,9 @@ def _build_load_cases(load_cases: List[LoadCaseRequest]) -> List[ExternalLoading
     ]
 
 
-def _run_analysis(req: AnalyzeRequest):
-    bc = _build_bolt_circle(req, num_bolts=req.num_bolts, pcd=req.bolt_circle_diameter_mm)
-    iface = _build_interface(
-        req.layers, req.interface_treatment, req.friction_coefficient,
-        req.num_friction_interfaces, req.available_flange_diameter_mm,
-        req.cone_half_angle_deg,
-    )
-    load_cases = _build_load_cases(req.load_cases)
-    results = run_vdi2230_analysis(
-        bolt_circle=bc,
-        interface=iface,
-        load_cases=load_cases,
+def _analysis_kwargs(req: AnalyzeRequest) -> dict:
+    """Keyword arguments for run_vdi2230_analysis derived from the request."""
+    return dict(
         load_intro_factor_n=req.load_intro_factor_n,
         plate_thickness=req.plate_thickness_mm,
         plate_yield_strength=req.plate_yield_strength_MPa,
@@ -329,6 +322,27 @@ def _run_analysis(req: AnalyzeRequest):
         tapped_material_uts=req.tapped_material_uts_MPa,
         fos_yield_installation=req.fos_yield_installation,
         fos_ultimate_installation=req.fos_ultimate_installation,
+    )
+
+
+def _build_all(req: AnalyzeRequest):
+    bc = _build_bolt_circle(req, num_bolts=req.num_bolts, pcd=req.bolt_circle_diameter_mm)
+    iface = _build_interface(
+        req.layers, req.interface_treatment, req.friction_coefficient,
+        req.num_friction_interfaces, req.available_flange_diameter_mm,
+        req.cone_half_angle_deg,
+    )
+    load_cases = _build_load_cases(req.load_cases)
+    return bc, iface, load_cases
+
+
+def _run_analysis(req: AnalyzeRequest):
+    bc, iface, load_cases = _build_all(req)
+    results = run_vdi2230_analysis(
+        bolt_circle=bc,
+        interface=iface,
+        load_cases=load_cases,
+        **_analysis_kwargs(req),
     )
     return bc, iface, results
 
@@ -487,6 +501,62 @@ def analyze(req: AnalyzeRequest):
 
 
 # ---------------------------------------------------------------------------
+# Sizing endpoints
+# ---------------------------------------------------------------------------
+
+class TorqueWindowRequest(AnalyzeRequest):
+    torque_min_Nmm: Optional[float] = None
+    torque_max_Nmm: Optional[float] = None
+    sweep_points: int = 60
+
+
+class SuggestBoltsRequest(AnalyzeRequest):
+    sweep_points: int = 30
+    max_candidates: int = 24
+
+
+@app.post("/api/torque-window")
+def torque_window_endpoint(req: TorqueWindowRequest):
+    """Sweep the assembly torque and return the allowable band + recommendation."""
+    try:
+        bc, iface, load_cases = _build_all(req)
+        return torque_window(
+            bc, iface, load_cases,
+            torque_min=req.torque_min_Nmm,
+            torque_max=req.torque_max_Nmm,
+            points=req.sweep_points,
+            **_analysis_kwargs(req),
+        )
+    except HTTPException:
+        raise
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/suggest-bolts")
+def suggest_bolts_endpoint(req: SuggestBoltsRequest):
+    """Evaluate library bolts of the same thread standard for this joint."""
+    try:
+        bc, iface, load_cases = _build_all(req)
+        return {
+            "candidates": suggest_bolts(
+                bc, iface, load_cases,
+                points=req.sweep_points,
+                max_candidates=req.max_candidates,
+                **_analysis_kwargs(req),
+            )
+        }
+    except HTTPException:
+        raise
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Export endpoints
 # ---------------------------------------------------------------------------
 
@@ -538,11 +608,22 @@ def export_pdf(req: AnalyzeRequest):
             "plate_yield_strength_MPa": req.plate_yield_strength_MPa,
         }
         meta = (req.report_meta or ReportMeta()).model_dump()
+        from boltsizer.ecss.ecss_hb_32_23 import get_default_fos
+        defaults = get_default_fos(req.standard)
+        fos_summary = {
+            "Yield (working)": req.fos_yield if req.fos_yield is not None else defaults["yield"],
+            "Ultimate (working)": req.fos_ultimate if req.fos_ultimate is not None else defaults["ultimate"],
+            "Separation": req.fos_separation if req.fos_separation is not None else defaults["separation"],
+            "Slip": req.fos_slip if req.fos_slip is not None else defaults["slip"],
+            "Installation yield": req.fos_yield_installation,
+            "Installation ultimate": req.fos_ultimate_installation,
+        }
         pdf_bytes = generate_pdf_report(
             results=results,
             bolt_cfg=bolt_cfg,
             joint_cfg=joint_cfg,
             report_meta=meta,
+            fos_summary=fos_summary,
         )
         return StreamingResponse(
             io.BytesIO(pdf_bytes),

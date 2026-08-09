@@ -6,6 +6,7 @@ import { MarginBar } from "../components/charts/MarginBar";
 import { ForceWaterfall } from "../components/charts/ForceWaterfall";
 import { BoltCircleViz } from "../components/charts/BoltCircleViz";
 import { useAppStore, useResultsStale } from "../store/useAppStore";
+import { TorqueWindowPanel } from "../components/TorqueWindowPanel";
 import type { BoltResults } from "../types";
 
 function CaseResults({ caseResult }: { caseResult: BoltResults }) {
@@ -335,6 +336,8 @@ export function Results() {
           ))}
         </Tabs>
       )}
+
+      <TorqueWindowPanel />
 
       <div className="page-actions">
         <Button minimal icon="arrow-left" onClick={() => setCurrentStep(2)}>Loading</Button>

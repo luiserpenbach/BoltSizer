@@ -23,6 +23,17 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 from boltsizer.models.results import AnalysisResults, BoltResults, MarginOfSafety
+from boltsizer import __version__ as ENGINE_VERSION
+
+
+def _page_footer(canvas, doc):
+    """Page number + engine version on every page."""
+    canvas.saveState()
+    canvas.setFont("Helvetica", 7)
+    canvas.setFillColorRGB(0.35, 0.35, 0.35)
+    canvas.drawString(20 * mm, 12 * mm, f"BoltSizer v{ENGINE_VERSION}")
+    canvas.drawRightString(190 * mm, 12 * mm, f"Page {doc.page}")
+    canvas.restoreState()
 
 # ---------------------------------------------------------------------------
 # Colour definitions
@@ -48,6 +59,7 @@ def generate_pdf_report(
     bolt_cfg: Dict[str, Any],
     joint_cfg: Dict[str, Any],
     report_meta: Dict[str, Any],
+    fos_summary: Dict[str, float] = None,
 ) -> bytes:
     """Generate a PDF calculation report as bytes.
 
@@ -56,6 +68,7 @@ def generate_pdf_report(
         bolt_cfg: Bolt configuration dict from session state.
         joint_cfg: Joint configuration dict from session state.
         report_meta: Report metadata (project_name, revision, engineer_name).
+        fos_summary: Applied factors of safety {name: value} for the FoS table.
 
     Returns:
         PDF content as bytes.
@@ -138,6 +151,17 @@ def generate_pdf_report(
     story.append(Spacer(1, 4*mm))
 
     # -----------------------------------------------------------------------
+    # Factors of safety
+    # -----------------------------------------------------------------------
+    if fos_summary:
+        story.append(Paragraph("Factors of Safety", h1))
+        fos_rows = [["Check family", "FoS"]] + [
+            [name, f"{value:.2f}"] for name, value in fos_summary.items()
+        ]
+        story.append(_make_table(fos_rows, col_widths=[70*mm, 30*mm]))
+        story.append(Spacer(1, 4*mm))
+
+    # -----------------------------------------------------------------------
     # Input summary
     # -----------------------------------------------------------------------
     story.append(Paragraph("1. Input Summary", h1))
@@ -215,7 +239,7 @@ def generate_pdf_report(
         caption,
     ))
 
-    doc.build(story)
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
     return buffer.getvalue()
 
 
@@ -302,6 +326,31 @@ def _add_case_section(story, case_result: BoltResults, standard: str, h2, body, 
 
     ms_table.setStyle(TableStyle(col_styles))
     story.append(ms_table)
+
+    # Calculation chain
+    if case_result.calc_steps:
+        story.append(Spacer(1, 4*mm))
+        story.append(Paragraph("Calculation chain", h2))
+        chain_rows = [["Step", "Substitution", "Result"]]
+        for s in case_result.calc_steps:
+            chain_rows.append([
+                Paragraph(str(s.get("step", "")), body),
+                Paragraph(str(s.get("substitution", "")), caption),
+                Paragraph(str(s.get("result", "")), body),
+            ])
+        chain = Table(chain_rows, colWidths=[52*mm, 62*mm, 56*mm])
+        chain.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BLUE),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, _LIGHT_GREY]),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(chain)
 
     # Warnings
     if case_result.warnings:
