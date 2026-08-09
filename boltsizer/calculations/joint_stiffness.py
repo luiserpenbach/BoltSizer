@@ -267,10 +267,43 @@ def calculate_joint_stiffness(
     # Protect against degenerate case
     total_compliance = delta_S + delta_P
     if total_compliance <= 0:
-        phi_basic = 0.5  # Fallback
+        phi_conc = 0.5  # Fallback
     else:
-        # --- Step 3: Force ratio φ ---
-        phi_basic = delta_P / total_compliance
+        # --- Step 3: Force ratio φ (concentric) ---
+        phi_conc = delta_P / total_compliance
+
+    # --- Step 3b: Eccentric clamping / loading (VDI 2230 §5.3.2) ---
+    # δ_P*  = δ_P + s²·l_K/(Ē_P·I_Bers)         (eccentric clamping)
+    # δ_P** = δ_P + s·a·l_K/(Ē_P·I_Bers)        (+ eccentric loading)
+    # Φ_e   = δ_P** / (δ_S + δ_P*)
+    # I_Bers: substitutional bending inertia of the clamp solid,
+    # approximated as the annulus of the effective solid diameter
+    # D_eff = min(D_A, d_w + l_K·tanφ) — a documented simplification of
+    # the VDI substitutional-solid construction.
+    s = interface.eccentricity_s
+    a = interface.load_eccentricity_a
+    phi_basic = phi_conc
+    phi_concentric = None
+    if (s != 0.0 or a != 0.0) and total_compliance > 0:
+        l_K = interface.total_clamped_length
+        D_eff = d_w + l_K * tan_phi
+        if interface.available_diameter is not None:
+            D_eff = min(D_eff, interface.available_diameter)
+        I_Bers = math.pi / 64.0 * max(D_eff ** 4 - d_h ** 4, 1.0)
+        # Effective clamped-part modulus: series stack Ē = l_K / Σ(t_i/E_i)
+        denom_E = sum(
+            l.thickness / l.youngs_modulus
+            for l in interface.layers
+            if l.youngs_modulus > 0 and l.thickness > 0
+        )
+        E_bar = l_K / denom_E if denom_E > 0 else 0.0
+        if E_bar > 0 and I_Bers > 0 and l_K > 0:
+            bend_term = l_K / (E_bar * I_Bers)
+            delta_P_star = delta_P + s * s * bend_term
+            delta_P_star2 = delta_P + s * a * bend_term
+            phi_e = delta_P_star2 / (delta_S + delta_P_star)
+            phi_basic = min(max(phi_e, 0.0), 1.0)
+            phi_concentric = phi_conc
 
     # --- Step 4: Load-corrected force ratio φ_n ---
     phi_n = load_intro_factor_n * phi_basic
@@ -281,4 +314,5 @@ def calculate_joint_stiffness(
         phi_basic=phi_basic,
         phi_n=phi_n,
         load_intro_factor_n=load_intro_factor_n,
+        phi_concentric=phi_concentric,
     )

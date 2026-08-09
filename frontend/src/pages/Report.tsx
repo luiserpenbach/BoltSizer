@@ -1,13 +1,13 @@
 import { useRef, useState } from "react";
 import { Button, Callout, FileInput, FormGroup, InputGroup } from "@blueprintjs/core";
 import { useAppStore } from "../store/useAppStore";
-import { exportJson, exportPdf, importJson, buildAnalyzeReq } from "../api/client";
+import { exportJson, exportPdf, importJson, buildAnalyzeReq, exportProjectPdf } from "../api/client";
 import type { AnalyzeReq } from "../api/client";
 
 export function Report() {
   const {
     boltConfig, jointConfig, loadCases, results, importConfig, setCurrentStep,
-    standard, fos, reportMeta, setReportMeta,
+    standard, fos, reportMeta, setReportMeta, groups,
   } = useAppStore();
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -23,6 +23,31 @@ export function Report() {
       await exportPdf(req);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "PDF export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleProjectPdf = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const names = Object.keys(groups);
+      const groupReqs = names.map((n) => ({
+        name: n,
+        request: buildAnalyzeReq(
+          groups[n].boltConfig, groups[n].jointConfig, groups[n].loadCases,
+          groups[n].standard, groups[n].fos,
+        ),
+      }));
+      // Always include the current (unsaved) configuration as its own group
+      groupReqs.push({
+        name: "Current configuration",
+        request: req,
+      });
+      await exportProjectPdf(groupReqs, reportMeta);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Project PDF export failed");
     } finally {
       setExporting(false);
     }
@@ -170,6 +195,16 @@ export function Report() {
               Run the analysis first to generate a PDF.
             </p>
           )}
+          <Button
+            icon="projects"
+            onClick={handleProjectPdf}
+            disabled={exporting}
+            loading={exporting}
+            fill
+            style={{ marginTop: 8 }}
+          >
+            Project report ({Object.keys(groups).length} saved group{Object.keys(groups).length === 1 ? "" : "s"} + current)
+          </Button>
         </div>
 
         <div

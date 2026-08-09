@@ -10,6 +10,14 @@ import type {
 } from "../types";
 import { runAnalysis, buildAnalyzeReq } from "../api/client";
 
+export interface GroupSnapshot {
+  boltConfig: BoltConfig;
+  jointConfig: JointConfig;
+  loadCases: LoadCase[];
+  standard: "VDI" | "ECSS";
+  fos: FosConfig;
+}
+
 export interface AppState {
   currentStep: number;
   boltConfig: BoltConfig;
@@ -17,6 +25,8 @@ export interface AppState {
   loadCases: LoadCase[];
   fos: FosConfig;
   reportMeta: ReportMeta;
+  /** Named bolt-group snapshots for multi-group projects. */
+  groups: Record<string, GroupSnapshot>;
   results: AnalysisResults | null;
   /** Serialized request behind the currently displayed results (staleness). */
   lastRunKey: string | null;
@@ -34,6 +44,9 @@ export interface AppState {
   setStandard: (s: "VDI" | "ECSS") => void;
   setFos: (f: Partial<FosConfig>) => void;
   setReportMeta: (m: Partial<ReportMeta>) => void;
+  saveGroup: (name: string) => void;
+  loadGroup: (name: string) => void;
+  deleteGroup: (name: string) => void;
   runAnalysis: () => Promise<void>;
   clearResults: () => void;
   resetAll: () => void;
@@ -81,6 +94,14 @@ const DEFAULT_JOINT: JointConfig = {
   tapped_material_uts_MPa: 310,
   available_flange_diameter_mm: null,
   auto_bearing: true,
+  pattern: "circle",
+  rect_nx: 2,
+  rect_ny: 2,
+  rect_pitch_x_mm: 60,
+  rect_pitch_y_mm: 60,
+  custom_positions_text: "",
+  eccentricity_s_mm: 0,
+  load_eccentricity_a_mm: 0,
 };
 
 const DEFAULT_LOAD_CASE: LoadCase = {
@@ -135,6 +156,7 @@ export const useAppStore = create<AppState>()(
       loadCases: [{ ...DEFAULT_LOAD_CASE }],
       fos: { ...DEFAULT_FOS },
       reportMeta: { ...DEFAULT_META },
+      groups: {},
       results: null,
       lastRunKey: null,
       isAnalyzing: false,
@@ -175,6 +197,43 @@ export const useAppStore = create<AppState>()(
 
       setReportMeta: (m) => set((s) => ({ reportMeta: { ...s.reportMeta, ...m } })),
 
+      saveGroup: (name) =>
+        set((s) => ({
+          groups: {
+            ...s.groups,
+            [name]: {
+              boltConfig: JSON.parse(JSON.stringify(s.boltConfig)),
+              jointConfig: JSON.parse(JSON.stringify(s.jointConfig)),
+              loadCases: JSON.parse(JSON.stringify(s.loadCases)),
+              standard: s.standard,
+              fos: { ...s.fos },
+            },
+          },
+        })),
+
+      loadGroup: (name) =>
+        set((s) => {
+          const g = s.groups[name];
+          if (!g) return s;
+          return {
+            ...s,
+            boltConfig: JSON.parse(JSON.stringify(g.boltConfig)),
+            jointConfig: JSON.parse(JSON.stringify(g.jointConfig)),
+            loadCases: JSON.parse(JSON.stringify(g.loadCases)),
+            standard: g.standard,
+            fos: { ...g.fos },
+            results: null,
+            lastRunKey: null,
+          };
+        }),
+
+      deleteGroup: (name) =>
+        set((s) => {
+          const groups = { ...s.groups };
+          delete groups[name];
+          return { groups };
+        }),
+
       runAnalysis: async () => {
         const { boltConfig, jointConfig, loadCases, standard, fos, reportMeta } = get();
         set({ isAnalyzing: true, analyzeError: null });
@@ -203,6 +262,7 @@ export const useAppStore = create<AppState>()(
           loadCases: [{ ...DEFAULT_LOAD_CASE }],
           fos: { ...DEFAULT_FOS },
           reportMeta: { ...DEFAULT_META },
+          groups: {},
           results: null,
           lastRunKey: null,
           analyzeError: null,
@@ -222,6 +282,7 @@ export const useAppStore = create<AppState>()(
         loadCases: s.loadCases,
         fos: s.fos,
         reportMeta: s.reportMeta,
+        groups: s.groups,
         standard: s.standard,
       }),
       // Deep-merge persisted config over defaults so states saved by older

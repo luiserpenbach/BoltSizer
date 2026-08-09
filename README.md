@@ -86,9 +86,26 @@ tests/               engine tests + SpaceBolt validation fixtures
 The former Streamlit UI was removed (2026-08) to keep a single frontend —
 recover it from git history if ever needed.
 
+## Sizing & depth features
+
+- **Torque window finder** — sweeps M_A, shades the allowable band
+  (floor: separation/slip; ceiling: assembly yield/surface pressure) and
+  recommends the max-worst-margin torque.
+- **Bolt auto-suggest** — evaluates every same-standard library size via
+  its torque window; smallest passing size at a glance.
+- **Sensitivity tornado** — one-at-a-time perturbations (μ, K, torque,
+  loads, ΔT) ranked by influence on the worst margin.
+- **Patterns** — bolt circle, rectangular grid, or custom XY positions
+  (bending about the centroid, torsion ∝ radius).
+- **Eccentric clamping/loading** — simplified VDI 2230 §5.3.2 model
+  (s_sym, a inputs); a > s produces prying and raises the bolt share.
+- **Multi-group projects** — save named bolt groups and export one
+  project PDF with an overall summary of margins.
+
 ## Scope & assumptions
 
-Concentric clamping and loading (no prying/eccentricity model yet),
-compression-cone half-angle 30° default, single bolt-circle pattern,
-bearing allowable 1.5·σ_y convention. All results are engineering
-estimates — verify against applicable project standards.
+Compression-cone half-angle 30° default, substitutional-solid inertia
+for the eccentric model approximated as an annulus of the effective
+solid diameter, bearing allowable 1.5·σ_y convention, shear direction
+vs pattern not tracked (conservative scalar combination). All results
+are engineering estimates — verify against applicable project standards.

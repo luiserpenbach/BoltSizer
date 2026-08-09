@@ -41,6 +41,11 @@ class ClampedInterface:
         cone_half_angle_deg: Compression cone half-angle φ_K [deg].
             Default 30° (classic Rotscher/Shigley assumption; VDI 2230
             computes joint-specific angles — 30° is a reasonable mid value).
+        eccentricity_s: Distance s_sym between the bolt axis and the axis
+            of the clamp solid [mm] (VDI 2230 §5.3.2). 0 = concentric.
+        load_eccentricity_a: Distance a between the axial-load line of
+            action and the clamp-solid axis [mm], same side as s positive.
+            0 = concentric loading.
     """
     total_clamped_length: float          # [mm] grip length l_K
     layers: List[ClampedLayer]
@@ -49,6 +54,8 @@ class ClampedInterface:
     num_friction_interfaces: int = 1
     available_diameter: Optional[float] = None   # [mm] D_A cone limit
     cone_half_angle_deg: float = 30.0
+    eccentricity_s: float = 0.0          # [mm] s_sym
+    load_eccentricity_a: float = 0.0     # [mm] a
 
     def __post_init__(self):
         # Recompute total from layers if layers provided
@@ -86,6 +93,14 @@ class BoltCircle:
         embedding_percent_of_max: Alternative embedding model — preload
             loss as a fraction of the maximum preload (e.g. 0.05 for the
             common 5% assumption).  None → VDI 2230 Table 5.4 guide values.
+        pattern: Bolt pattern type — "circle" (num_bolts on the PCD),
+            "rectangle" (rect_nx × rect_ny grid), or "custom"
+            (explicit XY positions).  Bending is resolved about the
+            pattern centroid with the moment axis along Y (bolt axial
+            force ∝ x-coordinate), matching the circle convention.
+        rect_nx / rect_ny: Grid counts for the rectangle pattern.
+        rect_pitch_x / rect_pitch_y: Grid pitches [mm].
+        custom_positions: [(x, y), ...] bolt positions [mm] for "custom".
     """
     num_bolts: int
     bolt_circle_diameter: float          # [mm] PCD
@@ -100,6 +115,45 @@ class BoltCircle:
     nut_factor_K_max: Optional[float] = None
     tool_scatter_pct: Optional[float] = None
     embedding_percent_of_max: Optional[float] = None
+    pattern: Literal["circle", "rectangle", "custom"] = "circle"
+    rect_nx: int = 2
+    rect_ny: int = 2
+    rect_pitch_x: float = 60.0
+    rect_pitch_y: float = 60.0
+    custom_positions: Optional[List[tuple]] = None
+
+    def bolt_positions(self) -> List[tuple]:
+        """Bolt XY positions [mm] about the pattern centroid."""
+        import math as _math
+        if self.pattern == "rectangle":
+            nx, ny = max(1, self.rect_nx), max(1, self.rect_ny)
+            x0 = -(nx - 1) * self.rect_pitch_x / 2.0
+            y0 = -(ny - 1) * self.rect_pitch_y / 2.0
+            return [
+                (x0 + i * self.rect_pitch_x, y0 + j * self.rect_pitch_y)
+                for j in range(ny) for i in range(nx)
+            ]
+        if self.pattern == "custom" and self.custom_positions:
+            xs = [p[0] for p in self.custom_positions]
+            ys = [p[1] for p in self.custom_positions]
+            cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+            return [(x - cx, y - cy) for x, y in self.custom_positions]
+        # circle (default)
+        r = self.bolt_circle_diameter / 2.0
+        n = max(1, self.num_bolts)
+        return [
+            (r * _math.cos(2 * _math.pi * i / n), r * _math.sin(2 * _math.pi * i / n))
+            for i in range(n)
+        ]
+
+    @property
+    def effective_num_bolts(self) -> int:
+        """Bolt count for the active pattern."""
+        if self.pattern == "rectangle":
+            return max(1, self.rect_nx) * max(1, self.rect_ny)
+        if self.pattern == "custom" and self.custom_positions:
+            return len(self.custom_positions)
+        return max(1, self.num_bolts)
 
 
 @dataclass

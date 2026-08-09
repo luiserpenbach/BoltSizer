@@ -84,6 +84,8 @@ export interface StiffnessPreviewReq {
   available_flange_diameter_mm?: number | null;
   head_bearing_diameter_mm?: number | null;
   hole_diameter_mm?: number | null;
+  eccentricity_s_mm?: number;
+  load_eccentricity_a_mm?: number;
 }
 
 export const previewStiffness = (req: StiffnessPreviewReq) =>
@@ -137,9 +139,32 @@ export interface AnalyzeReq {
   available_flange_diameter_mm?: number | null;
   tapped_engagement_length_mm?: number | null;
   tapped_material_uts_MPa?: number | null;
+  pattern?: "circle" | "rectangle" | "custom";
+  rect_nx?: number;
+  rect_ny?: number;
+  rect_pitch_x_mm?: number;
+  rect_pitch_y_mm?: number;
+  custom_positions_mm?: [number, number][] | null;
+  eccentricity_s_mm?: number;
+  load_eccentricity_a_mm?: number;
   load_cases: LoadCase[];
   standard: "VDI" | "ECSS";
   report_meta?: ReportMeta | null;
+}
+
+/** Parse the custom-positions textarea: one "x,y" pair [mm] per line. */
+export function parseCustomPositions(text: string): [number, number][] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .map((l) => {
+      const parts = l.split(/[,;\s]+/).map(parseFloat);
+      if (parts.length < 2 || parts.some(Number.isNaN)) {
+        throw new Error(`Invalid position line: "${l}" (expected "x,y")`);
+      }
+      return [parts[0], parts[1]] as [number, number];
+    });
 }
 
 /** DIN 912 socket-head bearing OD (≈ head diameter d_k) per metric size. */
@@ -207,11 +232,57 @@ export function buildAnalyzeReq(
       joint.joint_type === "tapped" ? joint.tapped_engagement_length_mm : null,
     tapped_material_uts_MPa:
       joint.joint_type === "tapped" ? joint.tapped_material_uts_MPa : null,
+    pattern: joint.pattern,
+    rect_nx: joint.rect_nx,
+    rect_ny: joint.rect_ny,
+    rect_pitch_x_mm: joint.rect_pitch_x_mm,
+    rect_pitch_y_mm: joint.rect_pitch_y_mm,
+    custom_positions_mm:
+      joint.pattern === "custom" && joint.custom_positions_text.trim()
+        ? parseCustomPositions(joint.custom_positions_text)
+        : null,
+    eccentricity_s_mm: joint.eccentricity_s_mm,
+    load_eccentricity_a_mm: joint.load_eccentricity_a_mm,
     load_cases: loadCases,
     standard,
     report_meta: reportMeta ?? null,
   };
 }
+
+// ---- Sensitivity ----
+
+export interface SensitivityParam {
+  name: string;
+  low_ms: number;
+  high_ms: number;
+}
+
+export interface SensitivityResult {
+  baseline_ms: number;
+  params: SensitivityParam[];
+}
+
+export const fetchSensitivity = (req: AnalyzeReq) =>
+  api.post<SensitivityResult>("/api/sensitivity", req).then((r) => r.data);
+
+// ---- Project (multi-group) ----
+
+export const exportProjectPdf = async (
+  groups: { name: string; request: AnalyzeReq }[],
+  reportMeta?: ReportMeta
+) => {
+  const resp = await api.post(
+    "/api/export/project-pdf",
+    { groups, report_meta: reportMeta ?? null },
+    { responseType: "blob" }
+  );
+  const url = URL.createObjectURL(resp.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "boltsizer_project.pdf";
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 export const runAnalysis = (req: AnalyzeReq) =>
   api.post<AnalysisResults>("/api/analyze", req).then((r) => r.data);

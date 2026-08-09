@@ -131,6 +131,102 @@ def torque_window(
     return {"points": sweep, "window": window, "recommended": recommended}
 
 
+def _worst_ms_of_run(results) -> float:
+    worst = float("inf")
+    for case in results.case_results:
+        for m in case.margins:
+            if m.value < worst:
+                worst = m.value
+    return worst
+
+
+def sensitivity(
+    bolt_circle: BoltCircle,
+    interface: ClampedInterface,
+    load_cases: List[ExternalLoading],
+    **analysis_kwargs,
+) -> dict:
+    """One-at-a-time sensitivity of the worst margin to key inputs.
+
+    Perturbations (engineering-typical uncertainty bands):
+      friction μ (interface)  ±20%
+      nut factor K            ±10% (all K bounds scaled together)
+      assembly torque         ±5%
+      axial force             ±10%
+      shear force             ±10%
+      ΔT                      ±20 K shift (only when any case has ΔT ≠ 0)
+
+    Returns {baseline_ms, params: [{name, low_ms, high_ms}]} where
+    low/high are the worst margins at the parameter's lower/upper value.
+    """
+    def run(bc=None, iface=None, lcs=None) -> float:
+        results = run_vdi2230_analysis(
+            bc or bolt_circle, iface or interface, lcs or load_cases,
+            **analysis_kwargs,
+        )
+        return _worst_ms_of_run(results)
+
+    baseline = run()
+    params: List[dict] = []
+
+    # Interface friction ±20%
+    params.append({
+        "name": "Interface friction μ ±20%",
+        "low_ms": run(iface=replace(interface, friction_coefficient=interface.friction_coefficient * 0.8)),
+        "high_ms": run(iface=replace(interface, friction_coefficient=interface.friction_coefficient * 1.2)),
+    })
+
+    # Nut factor ±10% (scale nominal and bounds together)
+    def scale_K(f: float) -> BoltCircle:
+        return replace(
+            bolt_circle,
+            nut_factor_K=bolt_circle.nut_factor_K * f,
+            nut_factor_K_min=(bolt_circle.nut_factor_K_min or 0) * f or None,
+            nut_factor_K_max=(bolt_circle.nut_factor_K_max or 0) * f or None,
+        )
+    params.append({
+        "name": "Nut factor K ±10%",
+        "low_ms": run(bc=scale_K(0.9)),
+        "high_ms": run(bc=scale_K(1.1)),
+    })
+
+    # Assembly torque ±5%
+    if bolt_circle.assembly_torque > 0:
+        params.append({
+            "name": "Assembly torque ±5%",
+            "low_ms": run(bc=replace(bolt_circle, assembly_torque=bolt_circle.assembly_torque * 0.95)),
+            "high_ms": run(bc=replace(bolt_circle, assembly_torque=bolt_circle.assembly_torque * 1.05)),
+        })
+
+    # Load magnitudes ±10%
+    def scale_loads(attr: str, f: float) -> List[ExternalLoading]:
+        return [replace(lc, **{attr: getattr(lc, attr) * f}) for lc in load_cases]
+    params.append({
+        "name": "Axial force ±10%",
+        "low_ms": run(lcs=scale_loads("axial_force", 0.9)),
+        "high_ms": run(lcs=scale_loads("axial_force", 1.1)),
+    })
+    params.append({
+        "name": "Shear force ±10%",
+        "low_ms": run(lcs=scale_loads("shear_force", 0.9)),
+        "high_ms": run(lcs=scale_loads("shear_force", 1.1)),
+    })
+
+    # Temperature shift ±20 K (only when thermal cases exist)
+    if any(lc.delta_T != 0.0 for lc in load_cases):
+        def shift_T(dT: float) -> List[ExternalLoading]:
+            return [replace(lc, delta_T=lc.delta_T + dT) for lc in load_cases]
+        params.append({
+            "name": "ΔT ±20 K",
+            "low_ms": run(lcs=shift_T(-20.0)),
+            "high_ms": run(lcs=shift_T(+20.0)),
+        })
+
+    # Sort by influence (widest swing first)
+    params.sort(key=lambda p: -abs(p["high_ms"] - p["low_ms"]))
+    return {"baseline_ms": baseline, "params": params}
+
+
 def suggest_bolts(
     bolt_circle: BoltCircle,
     interface: ClampedInterface,

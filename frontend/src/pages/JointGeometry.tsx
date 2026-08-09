@@ -12,7 +12,7 @@ import { MetricCard } from "../components/shared/MetricCard";
 import { LayerEditor } from "../components/shared/LayerEditor";
 import { BoltCircleViz } from "../components/charts/BoltCircleViz";
 import { useAppStore } from "../store/useAppStore";
-import { fetchFlangeMaterials, previewStiffness, resolveHeadBearingDiameter } from "../api/client";
+import { fetchFlangeMaterials, previewStiffness, resolveHeadBearingDiameter, parseCustomPositions } from "../api/client";
 import type { StiffnessPreview } from "../types";
 
 // Interface friction guide values (editable; verify by test for
@@ -41,6 +41,36 @@ const FLANGE_YIELD_GUIDE: Record<string, number> = {
   "Copper alloy": 195,
   "Cast iron": 200,
 };
+
+/** Client-side pattern positions for the preview graphic (undefined = circle). */
+function previewPositions(joint: {
+  pattern: "circle" | "rectangle" | "custom";
+  rect_nx: number; rect_ny: number;
+  rect_pitch_x_mm: number; rect_pitch_y_mm: number;
+  custom_positions_text: string;
+}): [number, number][] | undefined {
+  if (joint.pattern === "rectangle") {
+    const out: [number, number][] = [];
+    const x0 = -((joint.rect_nx - 1) * joint.rect_pitch_x_mm) / 2;
+    const y0 = -((joint.rect_ny - 1) * joint.rect_pitch_y_mm) / 2;
+    for (let j = 0; j < joint.rect_ny; j++)
+      for (let i = 0; i < joint.rect_nx; i++)
+        out.push([x0 + i * joint.rect_pitch_x_mm, y0 + j * joint.rect_pitch_y_mm]);
+    return out;
+  }
+  if (joint.pattern === "custom") {
+    try {
+      const pts = parseCustomPositions(joint.custom_positions_text);
+      if (pts.length === 0) return undefined;
+      const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+      return pts.map(([x, y]) => [x - cx, y - cy]);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
 
 export function JointGeometry() {
   const { boltConfig, jointConfig, setJointConfig, setCurrentStep } = useAppStore();
@@ -103,6 +133,8 @@ export function JointGeometry() {
       available_flange_diameter_mm: jointConfig.available_flange_diameter_mm,
       head_bearing_diameter_mm: resolveHeadBearingDiameter(boltConfig),
       hole_diameter_mm: boltConfig.hole_diameter_mm,
+      eccentricity_s_mm: jointConfig.eccentricity_s_mm,
+      load_eccentricity_a_mm: jointConfig.load_eccentricity_a_mm,
     })
       .then(setPreview)
       .catch((e) => setPreviewError(e.message ?? "Preview failed"))
@@ -119,29 +151,94 @@ export function JointGeometry() {
     <div className="two-col">
       {/* ---- Left: inputs ---- */}
       <div>
-        <div className="section-heading">Bolt Circle</div>
-        <div className="two-col-equal">
-          <FormGroup label="Number of bolts">
-            <NumericInput
-              value={jointConfig.num_bolts}
-              min={1}
-              max={48}
-              stepSize={1}
-              onValueChange={(v) => setJointConfig({ num_bolts: v })}
-              fill
+        <div className="section-heading">Bolt Pattern</div>
+        <FormGroup label="Pattern type">
+          <HTMLSelect
+            value={jointConfig.pattern}
+            onChange={(e) => setJointConfig({ pattern: e.target.value as "circle" | "rectangle" | "custom" })}
+            options={[
+              { label: "Bolt circle (PCD)", value: "circle" },
+              { label: "Rectangular grid", value: "rectangle" },
+              { label: "Custom XY positions", value: "custom" },
+            ]}
+            fill
+          />
+        </FormGroup>
+        {jointConfig.pattern === "circle" && (
+          <div className="two-col-equal">
+            <FormGroup label="Number of bolts">
+              <NumericInput
+                value={jointConfig.num_bolts}
+                min={1}
+                max={48}
+                stepSize={1}
+                onValueChange={(v) => setJointConfig({ num_bolts: v })}
+                fill
+              />
+            </FormGroup>
+            <FormGroup label="PCD (bolt circle diameter) [mm]">
+              <NumericInput
+                value={jointConfig.bolt_circle_diameter_mm}
+                min={1}
+                max={5000}
+                stepSize={1}
+                majorStepSize={10}
+                onValueChange={(v) => setJointConfig({ bolt_circle_diameter_mm: v })}
+                fill
+              />
+            </FormGroup>
+          </div>
+        )}
+        {jointConfig.pattern === "rectangle" && (
+          <>
+            <div className="two-col-equal">
+              <FormGroup label="Bolts in X (n_x)">
+                <NumericInput
+                  value={jointConfig.rect_nx} min={1} max={20} stepSize={1}
+                  onValueChange={(v) => setJointConfig({ rect_nx: v })} fill
+                />
+              </FormGroup>
+              <FormGroup label="Bolts in Y (n_y)">
+                <NumericInput
+                  value={jointConfig.rect_ny} min={1} max={20} stepSize={1}
+                  onValueChange={(v) => setJointConfig({ rect_ny: v })} fill
+                />
+              </FormGroup>
+            </div>
+            <div className="two-col-equal">
+              <FormGroup label="Pitch X [mm]">
+                <NumericInput
+                  value={jointConfig.rect_pitch_x_mm} min={1} max={2000} stepSize={1} majorStepSize={10}
+                  onValueChange={(v) => setJointConfig({ rect_pitch_x_mm: v })} fill
+                />
+              </FormGroup>
+              <FormGroup label="Pitch Y [mm]">
+                <NumericInput
+                  value={jointConfig.rect_pitch_y_mm} min={1} max={2000} stepSize={1} majorStepSize={10}
+                  onValueChange={(v) => setJointConfig({ rect_pitch_y_mm: v })} fill
+                />
+              </FormGroup>
+            </div>
+            <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 0 }}>
+              Bending is resolved about the pattern centroid; bolt axial force ∝ X-coordinate.
+            </p>
+          </>
+        )}
+        {jointConfig.pattern === "custom" && (
+          <FormGroup
+            label="Bolt positions [mm] — one “x,y” per line"
+            helperText="Positions are re-centred on their centroid. Bending: bolt force ∝ x."
+          >
+            <textarea
+              className="bp5-input bp5-fill"
+              rows={5}
+              style={{ fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
+              value={jointConfig.custom_positions_text}
+              placeholder={"50,0\n-50,0\n0,50\n0,-50"}
+              onChange={(e) => setJointConfig({ custom_positions_text: e.target.value })}
             />
           </FormGroup>
-          <FormGroup label="PCD (bolt circle diameter) [mm]">
-            <NumericInput
-              value={jointConfig.bolt_circle_diameter_mm}
-              min={1}
-              max={5000}
-              stepSize={1}
-              onValueChange={(v) => setJointConfig({ bolt_circle_diameter_mm: v })}
-              fill
-            />
-          </FormGroup>
-        </div>
+        )}
 
         <div className="section-heading">Clamped Stack (Layers)</div>
         <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 0 }}>
@@ -234,6 +331,31 @@ export function JointGeometry() {
             />
           </FormGroup>
         </div>
+        <div className="two-col-equal">
+          <FormGroup
+            label="Bolt eccentricity s_sym [mm]"
+            helperText="Bolt axis ↔ clamp-solid axis (VDI §5.3.2). 0 = concentric."
+          >
+            <NumericInput
+              value={jointConfig.eccentricity_s_mm}
+              min={0} max={500} stepSize={0.5} minorStepSize={0.1} majorStepSize={5}
+              onValueChange={(v) => !Number.isNaN(v) && setJointConfig({ eccentricity_s_mm: v })}
+              fill
+            />
+          </FormGroup>
+          <FormGroup
+            label="Load eccentricity a [mm]"
+            helperText="Load line ↔ clamp-solid axis. a > s produces prying (higher bolt share)."
+          >
+            <NumericInput
+              value={jointConfig.load_eccentricity_a_mm}
+              min={0} max={500} stepSize={0.5} minorStepSize={0.1} majorStepSize={5}
+              onValueChange={(v) => !Number.isNaN(v) && setJointConfig({ load_eccentricity_a_mm: v })}
+              fill
+            />
+          </FormGroup>
+        </div>
+
         {jointConfig.joint_type === "tapped" && (
           <div className="two-col-equal">
             <FormGroup label="Thread engagement L_e [mm]">
@@ -376,10 +498,11 @@ export function JointGeometry() {
         )}
 
         <div style={{ marginTop: 20 }}>
-          <div className="section-heading" style={{ marginTop: 0 }}>Bolt Circle</div>
+          <div className="section-heading" style={{ marginTop: 0 }}>Bolt Pattern</div>
           <BoltCircleViz
             numBolts={jointConfig.num_bolts}
             pcd={jointConfig.bolt_circle_diameter_mm}
+            positions={previewPositions(jointConfig)}
           />
         </div>
       </div>

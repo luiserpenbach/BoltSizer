@@ -1,10 +1,60 @@
 import { useState } from "react";
 import {
   Tabs, Tab, Icon, Button, HTMLSelect, Popover, Dialog, DialogBody,
-  Tag, FormGroup, NumericInput, Alert, Classes,
+  Tag, FormGroup, NumericInput, InputGroup, Alert, Classes,
 } from "@blueprintjs/core";
 import { useAppStore, useResultsStale } from "../../store/useAppStore";
 import type { ReactNode } from "react";
+
+function GroupsPanel() {
+  const { groups, saveGroup, loadGroup, deleteGroup } = useAppStore();
+  const [name, setName] = useState("");
+  const names = Object.keys(groups);
+  return (
+    <div style={{ padding: 14, width: 300 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>Bolt groups</div>
+      <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 0 }}>
+        Save the current configuration as a named group. A project PDF with an
+        overall summary of all groups is available on the Report page.
+      </p>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        <InputGroup
+          small
+          placeholder="Group name…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          fill
+        />
+        <Button
+          small
+          intent="primary"
+          icon="floppy-disk"
+          disabled={!name.trim()}
+          onClick={() => {
+            saveGroup(name.trim());
+            setName("");
+          }}
+        >
+          Save
+        </Button>
+      </div>
+      {names.length === 0 ? (
+        <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No groups saved yet.</p>
+      ) : (
+        names.map((n) => (
+          <div key={n} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <span className="mono" style={{ flex: 1, fontSize: 12 }}>{n}</span>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+              {groups[n].boltConfig.designation}
+            </span>
+            <Button small minimal icon="folder-open" title="Load group" onClick={() => loadGroup(n)} />
+            <Button small minimal icon="trash" intent="danger" title="Delete group" onClick={() => deleteGroup(n)} />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
 
 export const APP_VERSION = "1.2.0";
 
@@ -154,6 +204,9 @@ export function AppShell({ children }: Props) {
           />
           <Popover content={<FosPanel />} placement="bottom-end">
             <Button minimal small icon="shield" text={fosSummary} />
+          </Popover>
+          <Popover content={<GroupsPanel />} placement="bottom-end">
+            <Button minimal small icon="folder-close" text="Groups" />
           </Popover>
 
           {stale && (

@@ -116,6 +116,16 @@ export interface JointConfig {
   tapped_material_uts_MPa: number;
   available_flange_diameter_mm: number | null; // null = unlimited cone
   auto_bearing: boolean; // derive bearing plate inputs from the stack
+  // Pattern (Wave 4)
+  pattern: "circle" | "rectangle" | "custom";
+  rect_nx: number;
+  rect_ny: number;
+  rect_pitch_x_mm: number;
+  rect_pitch_y_mm: number;
+  custom_positions_text: string; // "x,y" per line [mm]
+  // Eccentric clamping / loading (VDI §5.3.2)
+  eccentricity_s_mm: number;
+  load_eccentricity_a_mm: number;
 }
 
 export interface LoadCase {
@@ -201,9 +211,13 @@ export interface LoadDistResult {
   F_axial_per_bolt: number;
   F_bend_per_bolt: number;
   V_shear_per_bolt: number;
+  V_direct_per_bolt?: number;
+  V_torsion_per_bolt?: number;
   F_total_axial: number;
+  F_total_axial_min?: number;
   bolt_angles_deg: number[];
   bolt_axial_forces: number[];
+  bolt_positions?: [number, number][];
 }
 
 export interface BoltResults {

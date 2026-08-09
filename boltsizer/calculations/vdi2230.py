@@ -235,7 +235,7 @@ def _check_warnings(
         )
 
     # Torsion on a degenerate pattern cannot be reacted by bolt shear
-    if loading.torsion != 0.0 and (bolt_circle.num_bolts < 2 or bolt_circle.bolt_circle_diameter <= 0):
+    if loading.torsion != 0.0 and load_dist.V_torsion_per_bolt == 0.0:
         warnings.append(
             "⚠ A torsion moment was specified but the bolt pattern has no radius "
             "to react it (single bolt / zero PCD). The torsion was NOT included "

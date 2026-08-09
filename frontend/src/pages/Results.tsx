@@ -7,6 +7,7 @@ import { ForceWaterfall } from "../components/charts/ForceWaterfall";
 import { BoltCircleViz } from "../components/charts/BoltCircleViz";
 import { useAppStore, useResultsStale } from "../store/useAppStore";
 import { TorqueWindowPanel } from "../components/TorqueWindowPanel";
+import { SensitivityPanel } from "../components/SensitivityPanel";
 import type { BoltResults } from "../types";
 
 function CaseResults({ caseResult }: { caseResult: BoltResults }) {
@@ -143,6 +144,11 @@ function CaseResults({ caseResult }: { caseResult: BoltResults }) {
             numBolts={caseResult.load_dist.bolt_angles_deg.length}
             pcd={jointConfig.bolt_circle_diameter_mm}
             criticalBoltIndex={caseResult.load_dist.critical_bolt_index}
+            positions={
+              jointConfig.pattern !== "circle"
+                ? caseResult.load_dist.bolt_positions
+                : undefined
+            }
           />
         </div>
       </div>
@@ -338,6 +344,7 @@ export function Results() {
       )}
 
       <TorqueWindowPanel />
+      <SensitivityPanel />
 
       <div className="page-actions">
         <Button minimal icon="arrow-left" onClick={() => setCurrentStep(2)}>Loading</Button>

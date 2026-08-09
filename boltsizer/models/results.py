@@ -72,9 +72,10 @@ class StiffnessResult:
     """
     delta_S: float              # [mm/N] bolt compliance
     delta_P: float              # [mm/N] clamped-part compliance
-    phi_basic: float            # force ratio
+    phi_basic: float            # force ratio (effective; eccentric if s/a set)
     phi_n: float                # corrected force ratio
     load_intro_factor_n: float
+    phi_concentric: Optional[float] = None  # concentric ratio when eccentric model active
 
 
 @dataclass
@@ -105,6 +106,7 @@ class LoadDistributionResult:
     V_direct_per_bolt: float = 0.0
     V_torsion_per_bolt: float = 0.0
     F_total_axial_min: float = 0.0
+    bolt_positions: List[tuple] = field(default_factory=list)  # [(x, y)] mm about centroid
 
 
 @dataclass

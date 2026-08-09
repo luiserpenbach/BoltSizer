@@ -27,8 +27,8 @@ from boltsizer.models.joint import BoltCircle, ClampedInterface, ClampedLayer, E
 from boltsizer.calculations.preload import calculate_preload
 from boltsizer.calculations.joint_stiffness import calculate_joint_stiffness
 from boltsizer.calculations.vdi2230 import run_vdi2230_analysis
-from boltsizer.calculations.sizing import torque_window, suggest_bolts
-from boltsizer.export.pdf_report import generate_pdf_report
+from boltsizer.calculations.sizing import torque_window, suggest_bolts, sensitivity
+from boltsizer.export.pdf_report import generate_pdf_report, generate_project_pdf
 from boltsizer import __version__ as ENGINE_VERSION
 
 app = FastAPI(title="BoltSizer API", version="1.1.0")
@@ -140,6 +140,8 @@ class StiffnessPreviewRequest(_BoltFields):
     load_intro_factor_n: float = 0.5
     available_flange_diameter_mm: Optional[float] = None
     cone_half_angle_deg: float = 30.0
+    eccentricity_s_mm: float = 0.0
+    load_eccentricity_a_mm: float = 0.0
 
 
 class LoadCaseRequest(BaseModel):
@@ -165,6 +167,13 @@ class AnalyzeRequest(_BoltFields):
     # Joint geometry
     num_bolts: int = 8
     bolt_circle_diameter_mm: float = 100.0
+    # Bolt pattern (default circle keeps historical behaviour)
+    pattern: Literal["circle", "rectangle", "custom"] = "circle"
+    rect_nx: int = 2
+    rect_ny: int = 2
+    rect_pitch_x_mm: float = 60.0
+    rect_pitch_y_mm: float = 60.0
+    custom_positions_mm: Optional[List[List[float]]] = None  # [[x, y], ...]
     layers: List[dict] = Field(default_factory=lambda: [{"material": "Steel (carbon)", "thickness_mm": 20.0, "E": 210000.0}])
     interface_treatment: str = "bare metal"
     friction_coefficient: float = 0.12
@@ -172,6 +181,9 @@ class AnalyzeRequest(_BoltFields):
     load_intro_factor_n: float = 0.5
     available_flange_diameter_mm: Optional[float] = None
     cone_half_angle_deg: float = 30.0
+    # Eccentric clamping / loading (VDI 2230 §5.3.2); 0 = concentric
+    eccentricity_s_mm: float = 0.0
+    load_eccentricity_a_mm: float = 0.0
     plate_thickness_mm: float = 20.0
     plate_yield_strength_MPa: float = 240.0
     surface_pressure_limit_MPa: Optional[float] = None
@@ -327,11 +339,27 @@ def _analysis_kwargs(req: AnalyzeRequest) -> dict:
 
 def _build_all(req: AnalyzeRequest):
     bc = _build_bolt_circle(req, num_bolts=req.num_bolts, pcd=req.bolt_circle_diameter_mm)
+    bc.pattern = req.pattern
+    bc.rect_nx = req.rect_nx
+    bc.rect_ny = req.rect_ny
+    bc.rect_pitch_x = req.rect_pitch_x_mm
+    bc.rect_pitch_y = req.rect_pitch_y_mm
+    if req.custom_positions_mm:
+        if len(req.custom_positions_mm) < 1:
+            raise HTTPException(status_code=400, detail="custom_positions_mm is empty")
+        bc.custom_positions = [(float(p[0]), float(p[1])) for p in req.custom_positions_mm]
+    elif req.pattern == "custom":
+        raise HTTPException(
+            status_code=400,
+            detail="pattern='custom' requires custom_positions_mm",
+        )
     iface = _build_interface(
         req.layers, req.interface_treatment, req.friction_coefficient,
         req.num_friction_interfaces, req.available_flange_diameter_mm,
         req.cone_half_angle_deg,
     )
+    iface.eccentricity_s = req.eccentricity_s_mm
+    iface.load_eccentricity_a = req.load_eccentricity_a_mm
     load_cases = _build_load_cases(req.load_cases)
     return bc, iface, load_cases
 
@@ -409,6 +437,8 @@ def preview_stiffness(req: StiffnessPreviewRequest):
             req.num_friction_interfaces, req.available_flange_diameter_mm,
             req.cone_half_angle_deg,
         )
+        iface.eccentricity_s = req.eccentricity_s_mm
+        iface.load_eccentricity_a = req.load_eccentricity_a_mm
         stiff = calculate_joint_stiffness(bc, iface, req.load_intro_factor_n)
         return {
             "delta_S": stiff.delta_S,
@@ -416,6 +446,7 @@ def preview_stiffness(req: StiffnessPreviewRequest):
             "phi_basic": stiff.phi_basic,
             "phi_n": stiff.phi_n,
             "load_intro_factor_n": stiff.load_intro_factor_n,
+            "phi_concentric": stiff.phi_concentric,
         }
     except HTTPException:
         raise
@@ -460,6 +491,7 @@ def _case_to_dict(case) -> dict:
             "phi_basic": case.stiffness.phi_basic,
             "phi_n": case.stiffness.phi_n,
             "load_intro_factor_n": case.stiffness.load_intro_factor_n,
+            "phi_concentric": case.stiffness.phi_concentric,
         },
         "load_dist": {
             "critical_bolt_index": case.load_dist.critical_bolt_index,
@@ -472,6 +504,7 @@ def _case_to_dict(case) -> dict:
             "F_total_axial_min": case.load_dist.F_total_axial_min,
             "bolt_angles_deg": case.load_dist.bolt_angles_deg,
             "bolt_axial_forces": case.load_dist.bolt_axial_forces,
+            "bolt_positions": case.load_dist.bolt_positions,
         },
         "bolt_load_max": case.bolt_load_max,
         "bolt_load_amplitude": case.bolt_load_amplitude,
@@ -556,6 +589,20 @@ def suggest_bolts_endpoint(req: SuggestBoltsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/sensitivity")
+def sensitivity_endpoint(req: AnalyzeRequest):
+    """One-at-a-time sensitivity of the worst margin to key inputs."""
+    try:
+        bc, iface, load_cases = _build_all(req)
+        return sensitivity(bc, iface, load_cases, **_analysis_kwargs(req))
+    except HTTPException:
+        raise
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Export endpoints
 # ---------------------------------------------------------------------------
@@ -632,6 +679,49 @@ def export_pdf(req: AnalyzeRequest):
         )
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ProjectGroup(BaseModel):
+    name: str
+    request: AnalyzeRequest
+
+
+class ProjectPdfRequest(BaseModel):
+    groups: List[ProjectGroup]
+    report_meta: Optional[ReportMeta] = None
+
+
+@app.post("/api/export/project-pdf")
+def export_project_pdf(req: ProjectPdfRequest):
+    """Run every group's analysis and produce one combined project report."""
+    try:
+        if not req.groups:
+            raise HTTPException(status_code=400, detail="No groups supplied")
+        group_data = []
+        for g in req.groups:
+            _, _, results = _run_analysis(g.request)
+            group_data.append({
+                "name": g.name,
+                "results": results,
+                "bolt_cfg": {
+                    "designation": g.request.designation,
+                    "grade": g.request.grade,
+                },
+                "joint_cfg": {"num_bolts": g.request.num_bolts},
+            })
+        meta = (req.report_meta or ReportMeta()).model_dump()
+        pdf_bytes = generate_project_pdf(group_data, meta)
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=boltsizer_project.pdf"},
+        )
+    except HTTPException:
+        raise
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

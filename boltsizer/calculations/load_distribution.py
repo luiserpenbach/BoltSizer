@@ -1,22 +1,24 @@
-"""Bolt circle load distribution — axial + bending + shear + torsion.
+"""Bolt pattern load distribution — axial + bending + shear + torsion.
 
-For a symmetric bolt circle under combined loading, each bolt i is located
-at angle θ_i from the bending axis.  The load distribution assumptions:
+Supports circular, rectangular and custom XY bolt patterns.  For every
+pattern the loads resolve about the pattern centroid:
   - Axial (membrane): equal share per bolt.
-  - Bending: bolt load proportional to radial position × cos(θ_i).
-    (Rigid flange, elastic bolts — standard structural assumption.)
-  - Shear: equal share per bolt (friction-reacted or pin-reacted).
-  - Torsion about the circle axis: tangential shear V_t = M_T/(n_B·r)
-    per bolt, combined with the direct shear share by scalar addition
-    (conservative upper bound — the direct-shear direction relative to
-    the pattern is not tracked).
+  - Bending: bolt axial force ∝ x-coordinate (moment axis along Y):
+        F_B,i = M_B · x_i / Σ x_j²
+    (Rigid flange, elastic bolts — the classic bolt-group assumption.
+    For a circle this reduces to F_B,i = M·r·cosθ_i / Σ r²cos²θ, i.e.
+    F_max = 2M/(n·r).)
+  - Shear: equal direct share per bolt.
+  - Torsion about the pattern axis: tangential shear ∝ radius:
+        V_t,i = M_T · r_i / Σ r_j²
+    Combined with the direct share by scalar addition (conservative —
+    the direct-shear direction relative to the pattern is not tracked).
 
 Reference:
   Bickford, "An Introduction to the Design and Behavior of Bolted Joints",
-  4th ed., §6 — bolt circle moment resolution.
-  ECSS-E-HB-32-23A §8 — bolt group analysis.
+  4th ed., §6; ECSS-E-HB-32-23A §8 — bolt group analysis.
 
-Sign convention: tension positive, bolts numbered 0..n-1 starting at θ=0.
+Sign convention: tension positive.
 """
 from __future__ import annotations
 import math
@@ -28,49 +30,46 @@ from boltsizer.models.results import LoadDistributionResult
 # LaTeX formula strings
 # ---------------------------------------------------------------------------
 FORMULA_AXIAL_PER_BOLT = r"F_{A,i} = \frac{F_{total}}{n_B}"
-FORMULA_BENDING_PER_BOLT = (
-    r"F_{B,i} = \frac{M_B \cdot r_i \cos\theta_i}{\sum_j r_j^2 \cos^2\!\theta_j}"
-)
-FORMULA_SHEAR_PER_BOLT = r"V_i = \frac{V_{total}}{n_B} + \frac{M_T}{n_B \cdot r}"
+FORMULA_BENDING_PER_BOLT = r"F_{B,i} = \frac{M_B \cdot x_i}{\sum_j x_j^2}"
+FORMULA_SHEAR_PER_BOLT = r"V_i = \frac{V_{total}}{n_B} + \frac{M_T \cdot r_i}{\sum_j r_j^2}"
 FORMULA_TOTAL_AXIAL = r"F_{tot,crit} = F_{A,i} + F_{B,i}"
 
 
 def _axial_forces(
-    n_B: int,
-    r: float,
+    positions: List[Tuple[float, float]],
     F_axial: float,
     M_bend: float,
-    angles_rad: List[float],
 ) -> List[float]:
-    """Per-bolt axial force from membrane + bending distribution."""
-    F_axial_each = F_axial / n_B
-    denom = sum(r ** 2 * math.cos(a) ** 2 for a in angles_rad)
-    if denom == 0:
-        # Degenerate case (r = 0): bending cannot be resolved by the pattern
-        denom = 1.0
-    return [F_axial_each + M_bend * r * math.cos(a) / denom for a in angles_rad]
+    """Per-bolt axial force from membrane + bending about the centroid."""
+    n = len(positions)
+    F_each = F_axial / n
+    sum_x2 = sum(x * x for x, _ in positions)
+    if sum_x2 <= 0:
+        return [F_each for _ in positions]
+    return [F_each + M_bend * x / sum_x2 for x, _ in positions]
 
 
 def calculate_load_distribution(
     bolt_circle: BoltCircle,
     loading: ExternalLoading,
 ) -> LoadDistributionResult:
-    """Distribute external loads onto individual bolts in the bolt circle.
+    """Distribute external loads onto individual bolts of the pattern.
 
-    The bolt most loaded in axial tension (axial + bending contributions)
-    is identified as the critical bolt.  The minimum load set
-    (axial_force_min / bending_moment_min) is evaluated on the SAME bolt
-    for the fatigue amplitude.
+    The bolt most loaded in axial tension (axial + bending) is the
+    critical bolt.  The minimum load set (axial_force_min /
+    bending_moment_min) is evaluated on the SAME bolt for the fatigue
+    amplitude.  The per-bolt shear reported is the worst combination of
+    direct share and torsion-induced tangential share.
 
     Args:
-        bolt_circle: Bolt circle geometry (n_B bolts on PCD).
+        bolt_circle: Bolt pattern definition (circle / rectangle / custom).
         loading: External loading including load factor.
 
     Returns:
         LoadDistributionResult identifying the critical bolt and its loads.
     """
-    n_B = bolt_circle.num_bolts
-    r = bolt_circle.bolt_circle_diameter / 2.0  # Bolt circle radius [mm]
+    positions = bolt_circle.bolt_positions()
+    n_B = len(positions)
 
     # Factored loads
     lf = loading.load_factor
@@ -81,15 +80,11 @@ def calculate_load_distribution(
     F_axial_min = loading.axial_force_min * lf
     M_bend_min = loading.bending_moment_min * lf
 
-    # Bolt angles: evenly spaced, starting at 0°
-    # Bending axis is horizontal (θ measured from top-dead-centre of bending).
-    angles_deg = [360.0 * i / n_B for i in range(n_B)]
-    angles_rad = [math.radians(a) for a in angles_deg]
-
+    angles_deg = [math.degrees(math.atan2(y, x)) % 360.0 for x, y in positions]
     F_axial_each = F_axial / n_B
 
     # --- Axial + bending, maximum load set ---
-    bolt_axial_forces = _axial_forces(n_B, r, F_axial, M_bend, angles_rad)
+    bolt_axial_forces = _axial_forces(positions, F_axial, M_bend)
 
     # --- Critical bolt (worst-case axial tension) ---
     critical_idx = int(bolt_axial_forces.index(max(bolt_axial_forces)))
@@ -97,13 +92,15 @@ def calculate_load_distribution(
     F_bend_crit = F_total_axial - F_axial_each
 
     # --- Minimum load set on the SAME bolt (fatigue amplitude) ---
-    bolt_axial_forces_min = _axial_forces(n_B, r, F_axial_min, M_bend_min, angles_rad)
+    bolt_axial_forces_min = _axial_forces(positions, F_axial_min, M_bend_min)
     F_total_axial_min = bolt_axial_forces_min[critical_idx]
 
     # --- Shear per bolt: direct share + torsion-induced tangential share ---
     V_direct = abs(V_shear) / n_B
-    if M_tors != 0.0 and r > 0:
-        V_torsion = abs(M_tors) / (n_B * r)
+    sum_r2 = sum(x * x + y * y for x, y in positions)
+    if M_tors != 0.0 and sum_r2 > 0:
+        r_max = max(math.hypot(x, y) for x, y in positions)
+        V_torsion = abs(M_tors) * r_max / sum_r2
     else:
         V_torsion = 0.0
     # Conservative scalar combination (directions not tracked)
@@ -120,4 +117,5 @@ def calculate_load_distribution(
         V_direct_per_bolt=V_direct,
         V_torsion_per_bolt=V_torsion,
         F_total_axial_min=F_total_axial_min,
+        bolt_positions=[(round(x, 6), round(y, 6)) for x, y in positions],
     )

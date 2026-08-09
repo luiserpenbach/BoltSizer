@@ -243,6 +243,101 @@ def generate_pdf_report(
     return buffer.getvalue()
 
 
+def generate_project_pdf(
+    groups: list,
+    report_meta: Dict[str, Any],
+) -> bytes:
+    """Multi-group project report: overall summary + one section per group.
+
+    Args:
+        groups: list of dicts {name, results: AnalysisResults,
+                bolt_cfg, joint_cfg}.
+        report_meta: project metadata dict.
+
+    Returns:
+        PDF bytes.
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        rightMargin=20*mm, leftMargin=20*mm, topMargin=25*mm, bottomMargin=20*mm,
+        title=f"BoltSizer Project — {report_meta.get('project_name', 'Project Report')}",
+        author=report_meta.get("engineer_name", ""),
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("Title", parent=styles["Title"],
+                                 fontSize=20, spaceAfter=6, textColor=_HEADER_BLUE)
+    h1 = ParagraphStyle("H1", parent=styles["Heading1"],
+                        fontSize=14, textColor=_HEADER_BLUE, spaceAfter=4, spaceBefore=12)
+    h2 = ParagraphStyle("H2", parent=styles["Heading2"],
+                        fontSize=11, textColor=_DARK_GREY, spaceAfter=3, spaceBefore=8)
+    body = styles["Normal"]; body.fontSize = 9; body.leading = 13
+    caption = ParagraphStyle("Caption", parent=body, fontSize=8, textColor=_DARK_GREY, italic=True)
+
+    story = []
+    story.append(Spacer(1, 8*mm))
+    story.append(Paragraph("BoltSizer — Project Report", title_style))
+    story.append(Paragraph(report_meta.get("project_name") or "—", styles["Heading2"]))
+    date_str = datetime.date.today().strftime("%Y-%m-%d")
+    story.append(Paragraph(
+        f"Revision {report_meta.get('revision', 'A')} · {report_meta.get('engineer_name') or '—'} · {date_str}",
+        body,
+    ))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=_HEADER_BLUE, spaceAfter=8))
+
+    # Overall summary of margins (SpaceBolt-style bolt-group overview)
+    story.append(Paragraph("Overall summary of margins", h1))
+    rows = [["Bolt group", "Bolt", "Standard", "Binding check", "Min MS", "Status"]]
+    colours = []
+    for gi, g in enumerate(groups, 1):
+        worst = None
+        for case in g["results"].case_results:
+            for m in case.margins:
+                if worst is None or m.value < worst.value:
+                    worst = m
+        ms_str = "∞" if worst is None else ("%.3f" % worst.value)
+        status = "—" if worst is None else worst.status
+        rows.append([
+            g["name"],
+            f"{g['bolt_cfg'].get('designation', '—')} {g['bolt_cfg'].get('grade', '')}",
+            g["results"].standard,
+            worst.check_name if worst else "—",
+            ms_str,
+            status,
+        ])
+        colours.append(_ms_colour(worst.value if worst else 1.0))
+    summary = Table(rows)
+    style = [
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), _HEADER_BLUE),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for i, c in enumerate(colours, 1):
+        style.append(("BACKGROUND", (4, i), (5, i), c))
+        style.append(("TEXTCOLOR", (4, i), (5, i), colors.white))
+    summary.setStyle(TableStyle(style))
+    story.append(summary)
+
+    # Per-group detail sections
+    for g in groups:
+        story.append(PageBreak())
+        story.append(Paragraph(f"Bolt group: {g['name']}", h1))
+        story.append(Paragraph(
+            f"{g['bolt_cfg'].get('designation', '—')} {g['bolt_cfg'].get('grade', '')} — "
+            f"{g['joint_cfg'].get('num_bolts', '?')} bolts",
+            body,
+        ))
+        for case_result in g["results"].case_results:
+            _add_case_section(story, case_result, g["results"].standard, h2, body, caption)
+
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    return buffer.getvalue()
+
+
 def _make_table(data: list, col_widths: list = None) -> Table:
     """Make a standard styled data table."""
     t = Table(data, colWidths=col_widths)
