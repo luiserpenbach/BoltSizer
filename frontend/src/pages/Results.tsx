@@ -10,6 +10,7 @@ import type { BoltResults } from "../types";
 
 function CaseResults({ caseResult }: { caseResult: BoltResults }) {
   const [showCalcChain, setShowCalcChain] = useState(false);
+  const { jointConfig } = useAppStore();
   const binding = caseResult.margins.find((m) => m.binding);
 
   return (
@@ -139,7 +140,7 @@ function CaseResults({ caseResult }: { caseResult: BoltResults }) {
           <div className="section-heading">Bolt Circle</div>
           <BoltCircleViz
             numBolts={caseResult.load_dist.bolt_angles_deg.length}
-            pcd={0}
+            pcd={jointConfig.bolt_circle_diameter_mm}
             criticalBoltIndex={caseResult.load_dist.critical_bolt_index}
           />
         </div>
