@@ -44,6 +44,19 @@ export interface LayerConfig {
 
 // ---- Store state config structs ----
 
+export type HeadStyle = "hex" | "din912" | "custom";
+export type ThreadRolled = "before_ht" | "after_ht";
+export type EmbeddingMode = "vdi" | "percent";
+
+export interface CustomMaterialConfig {
+  yield_strength_MPa: number;
+  uts_MPa: number;
+  youngs_modulus_MPa: number;
+  proof_load_stress_MPa: number | null;
+  fatigue_limit_MPa: number | null;
+  cte_per_K: number | null;
+}
+
 export interface BoltConfig {
   designation: string;
   grade: string;
@@ -61,6 +74,14 @@ export interface BoltConfig {
   num_mating_surfaces: number;
   surface_roughness_Rz: number;
   coating: string;
+  // Advanced
+  head_style: HeadStyle;
+  head_bearing_diameter_mm: number | null; // used when head_style = custom
+  hole_diameter_mm: number | null;         // null = library default
+  thread_rolled: ThreadRolled;
+  embedding_mode: EmbeddingMode;
+  embedding_percent: number;               // % of F_M_max, when mode = percent
+  custom_material: CustomMaterialConfig | null;
 }
 
 /** Factors of safety; null = use the selected standard's default. */
@@ -89,6 +110,12 @@ export interface JointConfig {
   load_intro_factor_n: number;
   plate_thickness_mm: number;
   plate_yield_strength_MPa: number;
+  // Advanced
+  joint_type: "through" | "tapped";
+  tapped_engagement_length_mm: number;
+  tapped_material_uts_MPa: number;
+  available_flange_diameter_mm: number | null; // null = unlimited cone
+  auto_bearing: boolean; // derive bearing plate inputs from the stack
 }
 
 export interface LoadCase {
@@ -98,6 +125,10 @@ export interface LoadCase {
   shear_force_N: number;
   torsion_Nmm: number;
   load_factor: number;
+  axial_force_min_N: number;
+  bending_moment_min_Nmm: number;
+  delta_T_C: number;
+  load_plane: "interface" | "bolt_head";
 }
 
 // ---- API Results ----

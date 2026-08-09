@@ -53,6 +53,11 @@ export interface PreloadPreviewReq {
   surface_roughness_Rz: number;
   grip_length_mm: number;
   layers?: { material: string; thickness_mm: number; E: number }[];
+  head_bearing_diameter_mm?: number | null;
+  hole_diameter_mm?: number | null;
+  thread_rolled?: "before_ht" | "after_ht";
+  embedding_percent_of_max?: number | null;
+  custom_material?: AnalyzeReq["custom_material"];
 }
 
 export const previewPreload = (req: PreloadPreviewReq) =>
@@ -76,6 +81,9 @@ export interface StiffnessPreviewReq {
   friction_coefficient: number;
   num_friction_interfaces: number;
   load_intro_factor_n: number;
+  available_flange_diameter_mm?: number | null;
+  head_bearing_diameter_mm?: number | null;
+  hole_diameter_mm?: number | null;
 }
 
 export const previewStiffness = (req: StiffnessPreviewReq) =>
@@ -114,9 +122,40 @@ export interface AnalyzeReq {
   fos_slip?: number | null;
   fos_yield_installation?: number;
   fos_ultimate_installation?: number;
+  head_bearing_diameter_mm?: number | null;
+  hole_diameter_mm?: number | null;
+  thread_rolled?: "before_ht" | "after_ht";
+  embedding_percent_of_max?: number | null;
+  custom_material?: {
+    yield_strength_MPa: number;
+    uts_MPa: number;
+    youngs_modulus_MPa: number;
+    proof_load_stress_MPa?: number | null;
+    fatigue_limit_MPa?: number | null;
+    cte_per_K?: number | null;
+  } | null;
+  available_flange_diameter_mm?: number | null;
+  tapped_engagement_length_mm?: number | null;
+  tapped_material_uts_MPa?: number | null;
   load_cases: LoadCase[];
   standard: "VDI" | "ECSS";
   report_meta?: ReportMeta | null;
+}
+
+/** DIN 912 socket-head bearing OD (≈ head diameter d_k) per metric size. */
+const DIN912_DW: Record<string, number> = {
+  M3: 5.5, M4: 7.0, M5: 8.5, M6: 10.0, M8: 13.0, M10: 16.0, M12: 18.0,
+  M14: 21.0, M16: 24.0, M18: 27.0, M20: 30.0, M22: 33.0, M24: 36.0,
+  M27: 40.0, M30: 45.0, M36: 54.0,
+};
+
+export function resolveHeadBearingDiameter(bolt: BoltConfig): number | null {
+  if (bolt.head_style === "custom") return bolt.head_bearing_diameter_mm;
+  if (bolt.head_style === "din912") {
+    const base = bolt.designation.split("x")[0];
+    return DIN912_DW[base] ?? null;
+  }
+  return null; // hex → library default (ISO 4014)
 }
 
 export function buildAnalyzeReq(
@@ -157,6 +196,17 @@ export function buildAnalyzeReq(
     fos_slip: fos?.fos_slip ?? null,
     fos_yield_installation: fos?.fos_yield_installation ?? 1.0,
     fos_ultimate_installation: fos?.fos_ultimate_installation ?? 1.0,
+    head_bearing_diameter_mm: resolveHeadBearingDiameter(bolt),
+    hole_diameter_mm: bolt.hole_diameter_mm,
+    thread_rolled: bolt.thread_rolled,
+    embedding_percent_of_max:
+      bolt.embedding_mode === "percent" ? bolt.embedding_percent / 100 : null,
+    custom_material: bolt.grade === "Custom" ? bolt.custom_material : null,
+    available_flange_diameter_mm: joint.available_flange_diameter_mm,
+    tapped_engagement_length_mm:
+      joint.joint_type === "tapped" ? joint.tapped_engagement_length_mm : null,
+    tapped_material_uts_MPa:
+      joint.joint_type === "tapped" ? joint.tapped_material_uts_MPa : null,
     load_cases: loadCases,
     standard,
     report_meta: reportMeta ?? null,

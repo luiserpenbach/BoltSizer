@@ -6,24 +6,66 @@ import {
   Button,
   Callout,
   Spinner,
+  Switch,
 } from "@blueprintjs/core";
 import { MetricCard } from "../components/shared/MetricCard";
 import { LayerEditor } from "../components/shared/LayerEditor";
 import { BoltCircleViz } from "../components/charts/BoltCircleViz";
 import { useAppStore } from "../store/useAppStore";
-import { fetchFlangeMaterials, previewStiffness } from "../api/client";
+import { fetchFlangeMaterials, previewStiffness, resolveHeadBearingDiameter } from "../api/client";
 import type { StiffnessPreview } from "../types";
 
+// Interface friction guide values (editable; verify by test for
+// slip-critical joints)
 const INTERFACE_OPTIONS = {
   "bare metal": 0.12,
-  "anodised aluminium": 0.10,
+  "degreased / cleaned": 0.2,
+  "anodised aluminium": 0.1,
+  "alodine / chromate (Al)": 0.15,
+  "zinc plated": 0.15,
   "painted": 0.08,
   "sandblasted": 0.35,
   "knurled": 0.25,
+  "lubricated / greased": 0.08,
+  "MoS2 coated": 0.05,
+};
+
+// Typical minimum yield strengths for the flange material list [MPa].
+// Guide values for the auto-derived bearing check — override as needed.
+const FLANGE_YIELD_GUIDE: Record<string, number> = {
+  "Steel (carbon)": 235,
+  "Steel (stainless)": 190,
+  "Aluminium alloy": 240,
+  "Titanium alloy": 830,
+  "Inconel 718": 1034,
+  "Copper alloy": 195,
+  "Cast iron": 200,
 };
 
 export function JointGeometry() {
   const { boltConfig, jointConfig, setJointConfig, setCurrentStep } = useAppStore();
+
+  // Auto-derive bearing-check inputs from the stack
+  const derivedThinnest = jointConfig.layers.length
+    ? Math.min(...jointConfig.layers.map((l) => l.thickness_mm))
+    : jointConfig.plate_thickness_mm;
+  const thinnestLayer = jointConfig.layers.find((l) => l.thickness_mm === derivedThinnest);
+  const derivedYield = thinnestLayer
+    ? FLANGE_YIELD_GUIDE[thinnestLayer.material] ?? jointConfig.plate_yield_strength_MPa
+    : jointConfig.plate_yield_strength_MPa;
+
+  useEffect(() => {
+    if (!jointConfig.auto_bearing) return;
+    if (
+      jointConfig.plate_thickness_mm !== derivedThinnest ||
+      jointConfig.plate_yield_strength_MPa !== derivedYield
+    ) {
+      setJointConfig({
+        plate_thickness_mm: derivedThinnest,
+        plate_yield_strength_MPa: derivedYield,
+      });
+    }
+  }, [jointConfig.auto_bearing, derivedThinnest, derivedYield]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [flangeMats, setFlangeMats] = useState<Record<string, number>>({});
   const [preview, setPreview] = useState<StiffnessPreview | null>(null);
@@ -58,6 +100,9 @@ export function JointGeometry() {
       friction_coefficient: jointConfig.friction_coefficient,
       num_friction_interfaces: jointConfig.num_friction_interfaces,
       load_intro_factor_n: jointConfig.load_intro_factor_n,
+      available_flange_diameter_mm: jointConfig.available_flange_diameter_mm,
+      head_bearing_diameter_mm: resolveHeadBearingDiameter(boltConfig),
+      hole_diameter_mm: boltConfig.hole_diameter_mm,
     })
       .then(setPreview)
       .catch((e) => setPreviewError(e.message ?? "Preview failed"))
@@ -149,6 +194,77 @@ export function JointGeometry() {
           />
         </FormGroup>
 
+        <div className="section-heading">Joint Type &amp; Cone Limit</div>
+        <div className="two-col-equal">
+          <FormGroup
+            label="Joint type"
+            helperText={
+              jointConfig.joint_type === "tapped"
+                ? "Tapped: thread-stripping check enabled."
+                : "Through-bolt with matching nut (no stripping check needed)."
+            }
+          >
+            <HTMLSelect
+              value={jointConfig.joint_type}
+              onChange={(e) => setJointConfig({ joint_type: e.target.value as "through" | "tapped" })}
+              options={[
+                { label: "Through-bolt (nut)", value: "through" },
+                { label: "Tapped / blind hole", value: "tapped" },
+              ]}
+              fill
+            />
+          </FormGroup>
+          <FormGroup
+            label="Available diameter D_A [mm]"
+            helperText="Cone limit ≈ min(bolt pitch, 2×edge distance). Blank = unlimited (wide flange)."
+          >
+            <NumericInput
+              value={jointConfig.available_flange_diameter_mm ?? undefined}
+              placeholder="unlimited"
+              min={1}
+              max={2000}
+              stepSize={1}
+              minorStepSize={0.5}
+              majorStepSize={10}
+              onValueChange={(v, str) =>
+                setJointConfig({
+                  available_flange_diameter_mm: str === "" || Number.isNaN(v) ? null : v,
+                })}
+              fill
+            />
+          </FormGroup>
+        </div>
+        {jointConfig.joint_type === "tapped" && (
+          <div className="two-col-equal">
+            <FormGroup label="Thread engagement L_e [mm]">
+              <NumericInput
+                value={jointConfig.tapped_engagement_length_mm}
+                min={1}
+                max={200}
+                stepSize={0.5}
+                minorStepSize={0.1}
+                majorStepSize={5}
+                onValueChange={(v) => !Number.isNaN(v) && setJointConfig({ tapped_engagement_length_mm: v })}
+                fill
+              />
+            </FormGroup>
+            <FormGroup
+              label="Tapped material UTS [MPa]"
+              helperText="Tensile ultimate of the insert / tapped part (e.g. AL6061-T6: 310)."
+            >
+              <NumericInput
+                value={jointConfig.tapped_material_uts_MPa}
+                min={50}
+                max={2000}
+                stepSize={10}
+                majorStepSize={100}
+                onValueChange={(v) => !Number.isNaN(v) && setJointConfig({ tapped_material_uts_MPa: v })}
+                fill
+              />
+            </FormGroup>
+          </div>
+        )}
+
         <div className="section-heading">Load Introduction</div>
         <FormGroup
           label={`Load introduction factor n = ${jointConfig.load_intro_factor_n.toFixed(2)}`}
@@ -166,6 +282,12 @@ export function JointGeometry() {
         </FormGroup>
 
         <div className="section-heading">Plate Bearing Check</div>
+        <Switch
+          checked={jointConfig.auto_bearing}
+          onChange={(e) => setJointConfig({ auto_bearing: e.currentTarget.checked })}
+          label={`Derive from stack (thinnest layer ${derivedThinnest.toFixed(1)} mm${thinnestLayer ? `, ${thinnestLayer.material} σ_y ≈ ${derivedYield} MPa guide value` : ""})`}
+          style={{ marginBottom: 8 }}
+        />
         <div className="two-col-equal">
           <FormGroup label="Thinnest plate thickness [mm]">
             <NumericInput
@@ -173,6 +295,8 @@ export function JointGeometry() {
               min={0.5}
               max={500}
               stepSize={0.5}
+              majorStepSize={5}
+              disabled={jointConfig.auto_bearing}
               onValueChange={(v) => setJointConfig({ plate_thickness_mm: v })}
               fill
             />
@@ -183,6 +307,8 @@ export function JointGeometry() {
               min={50}
               max={2000}
               stepSize={10}
+              majorStepSize={100}
+              disabled={jointConfig.auto_bearing}
               onValueChange={(v) => setJointConfig({ plate_yield_strength_MPa: v })}
               fill
             />

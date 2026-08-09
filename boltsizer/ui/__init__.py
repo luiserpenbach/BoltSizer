@@ -1,1 +1,0 @@
-"""BoltSizer UI package."""

@@ -7,10 +7,11 @@ import {
   Button,
   Callout,
   Spinner,
+  Collapse,
 } from "@blueprintjs/core";
 import { MetricCard } from "../components/shared/MetricCard";
 import { useAppStore } from "../store/useAppStore";
-import { fetchBolts, fetchMaterials, fetchCoatings, fetchTighteningMethods, previewPreload } from "../api/client";
+import { fetchBolts, fetchMaterials, fetchCoatings, fetchTighteningMethods, previewPreload, resolveHeadBearingDiameter } from "../api/client";
 import type { BoltLibraryEntry, MaterialEntry, CoatingEntry, TighteningMethod, PreloadPreview } from "../types";
 
 type BoltLibrary = Record<string, BoltLibraryEntry>;
@@ -42,6 +43,7 @@ export function BoltSelection() {
   const [preview, setPreview] = useState<PreloadPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Load reference data on mount
   useEffect(() => {
@@ -74,6 +76,12 @@ export function BoltSelection() {
       surface_roughness_Rz: boltConfig.surface_roughness_Rz,
       grip_length_mm: jointConfig.layers.reduce((s, l) => s + l.thickness_mm, 0),
       layers: jointConfig.layers,
+      head_bearing_diameter_mm: resolveHeadBearingDiameter(boltConfig),
+      hole_diameter_mm: boltConfig.hole_diameter_mm,
+      thread_rolled: boltConfig.thread_rolled,
+      embedding_percent_of_max:
+        boltConfig.embedding_mode === "percent" ? boltConfig.embedding_percent / 100 : null,
+      custom_material: boltConfig.grade === "Custom" ? boltConfig.custom_material : null,
     })
       .then(setPreview)
       .catch((e) => setPreviewError(e.message ?? "Preview failed"))
@@ -148,11 +156,92 @@ export function BoltSelection() {
         >
           <HTMLSelect
             value={boltConfig.grade}
-            onChange={(e) => setBoltConfig({ grade: e.target.value })}
+            onChange={(e) => {
+              const g = e.target.value;
+              setBoltConfig({
+                grade: g,
+                custom_material:
+                  g === "Custom"
+                    ? boltConfig.custom_material ?? {
+                        yield_strength_MPa: 640,
+                        uts_MPa: 800,
+                        youngs_modulus_MPa: 210000,
+                        proof_load_stress_MPa: null,
+                        fatigue_limit_MPa: null,
+                        cte_per_K: null,
+                      }
+                    : boltConfig.custom_material,
+              });
+            }}
             options={Object.keys(materials)}
             fill
           />
         </FormGroup>
+
+        {boltConfig.grade === "Custom" && boltConfig.custom_material && (
+          <div
+            style={{
+              border: "1px solid var(--border-color)",
+              borderRadius: 3,
+              padding: 12,
+              marginBottom: 14,
+              background: "var(--bg-surface)",
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>
+              Custom material properties
+            </div>
+            <div className="two-col-equal">
+              <FormGroup label="Yield R_p0.2 [MPa]">
+                <NumericInput
+                  value={boltConfig.custom_material.yield_strength_MPa}
+                  min={1} max={3000} stepSize={10} majorStepSize={100}
+                  onValueChange={(v) =>
+                    setBoltConfig({ custom_material: { ...boltConfig.custom_material!, yield_strength_MPa: v } })}
+                  fill
+                />
+              </FormGroup>
+              <FormGroup label="Ultimate R_m [MPa]">
+                <NumericInput
+                  value={boltConfig.custom_material.uts_MPa}
+                  min={1} max={3000} stepSize={10} majorStepSize={100}
+                  onValueChange={(v) =>
+                    setBoltConfig({ custom_material: { ...boltConfig.custom_material!, uts_MPa: v } })}
+                  fill
+                />
+              </FormGroup>
+            </div>
+            <div className="two-col-equal">
+              <FormGroup label="E [MPa]">
+                <NumericInput
+                  value={boltConfig.custom_material.youngs_modulus_MPa}
+                  min={1000} max={500000} stepSize={1000} majorStepSize={10000}
+                  onValueChange={(v) =>
+                    setBoltConfig({ custom_material: { ...boltConfig.custom_material!, youngs_modulus_MPa: v } })}
+                  fill
+                />
+              </FormGroup>
+              <FormGroup
+                label="Thread fatigue σ_AS [MPa]"
+                helperText="Optional. Fastener test data only — never smooth-bar values. Blank = VDI thread formula."
+              >
+                <NumericInput
+                  value={boltConfig.custom_material.fatigue_limit_MPa ?? undefined}
+                  placeholder="VDI formula"
+                  min={1} max={1000} stepSize={5} majorStepSize={25}
+                  onValueChange={(v, str) =>
+                    setBoltConfig({
+                      custom_material: {
+                        ...boltConfig.custom_material!,
+                        fatigue_limit_MPa: str === "" || Number.isNaN(v) ? null : v,
+                      },
+                    })}
+                  fill
+                />
+              </FormGroup>
+            </div>
+          </div>
+        )}
 
         <div className="two-col-equal">
           <FormGroup label="Shank length [mm]">
@@ -274,6 +363,105 @@ export function BoltSelection() {
             fill
           />
         </FormGroup>
+
+        <Button
+          minimal
+          small
+          icon={advancedOpen ? "chevron-down" : "chevron-right"}
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+          style={{ marginTop: 4 }}
+        >
+          Advanced bolt options
+        </Button>
+        <Collapse isOpen={advancedOpen}>
+          <div
+            style={{
+              border: "1px solid var(--border-color)",
+              borderRadius: 3,
+              padding: 12,
+              marginTop: 8,
+              background: "var(--bg-surface)",
+            }}
+          >
+            <div className="two-col-equal">
+              <FormGroup
+                label="Head style"
+                helperText="Sets the bearing face diameter d_w (surface pressure + stiffness)."
+              >
+                <HTMLSelect
+                  value={boltConfig.head_style}
+                  onChange={(e) => setBoltConfig({ head_style: e.target.value as "hex" | "din912" | "custom" })}
+                  options={[
+                    { label: "Hex (ISO 4014)", value: "hex" },
+                    { label: "Socket head (DIN 912)", value: "din912" },
+                    { label: "Custom d_w", value: "custom" },
+                  ]}
+                  fill
+                />
+              </FormGroup>
+              {boltConfig.head_style === "custom" ? (
+                <FormGroup label="Bearing face d_w [mm]">
+                  <NumericInput
+                    value={boltConfig.head_bearing_diameter_mm ?? undefined}
+                    min={1} max={200} stepSize={0.5} minorStepSize={0.1} majorStepSize={5}
+                    onValueChange={(v) => !Number.isNaN(v) && setBoltConfig({ head_bearing_diameter_mm: v })}
+                    fill
+                  />
+                </FormGroup>
+              ) : (
+                <FormGroup label="Clearance hole d_h [mm]" helperText="Blank = ISO 273 medium">
+                  <NumericInput
+                    value={boltConfig.hole_diameter_mm ?? undefined}
+                    placeholder="auto"
+                    min={1} max={200} stepSize={0.5} minorStepSize={0.1} majorStepSize={5}
+                    onValueChange={(v, str) =>
+                      setBoltConfig({ hole_diameter_mm: str === "" || Number.isNaN(v) ? null : v })}
+                    fill
+                  />
+                </FormGroup>
+              )}
+            </div>
+            <div className="two-col-equal">
+              <FormGroup
+                label="Thread rolling"
+                helperText="Rolled after heat treatment raises the fatigue allowable (VDI §5.5.3)."
+              >
+                <HTMLSelect
+                  value={boltConfig.thread_rolled}
+                  onChange={(e) => setBoltConfig({ thread_rolled: e.target.value as "before_ht" | "after_ht" })}
+                  options={[
+                    { label: "Rolled before HT (standard)", value: "before_ht" },
+                    { label: "Rolled after HT (aerospace)", value: "after_ht" },
+                  ]}
+                  fill
+                />
+              </FormGroup>
+              <FormGroup
+                label="Embedding model"
+                helperText={boltConfig.embedding_mode === "percent" ? "F_Z = % of max preload" : "VDI 2230 Table 5.4 guide values"}
+              >
+                <div style={{ display: "flex", gap: 8 }}>
+                  <HTMLSelect
+                    value={boltConfig.embedding_mode}
+                    onChange={(e) => setBoltConfig({ embedding_mode: e.target.value as "vdi" | "percent" })}
+                    options={[
+                      { label: "VDI table", value: "vdi" },
+                      { label: "% of preload", value: "percent" },
+                    ]}
+                  />
+                  {boltConfig.embedding_mode === "percent" && (
+                    <NumericInput
+                      value={boltConfig.embedding_percent}
+                      min={0} max={20} stepSize={0.5} minorStepSize={0.1} majorStepSize={2}
+                      onValueChange={(v) => !Number.isNaN(v) && setBoltConfig({ embedding_percent: v })}
+                      style={{ width: 80 }}
+                    />
+                  )}
+                </div>
+              </FormGroup>
+            </div>
+          </div>
+        </Collapse>
 
         <div className="section-heading">Assembly Loading</div>
 

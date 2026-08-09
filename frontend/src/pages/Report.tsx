@@ -50,6 +50,7 @@ export function Report() {
       // Map back to store format
       importConfig({
         boltConfig: {
+          ...boltConfig,
           designation: parsed.designation,
           grade: parsed.grade,
           shank_length_mm: parsed.shank_length_mm,
@@ -65,9 +66,16 @@ export function Report() {
           tightening_method: parsed.tightening_method,
           num_mating_surfaces: parsed.num_mating_surfaces,
           surface_roughness_Rz: parsed.surface_roughness_Rz,
-          coating: boltConfig.coating,
+          head_bearing_diameter_mm: parsed.head_bearing_diameter_mm ?? null,
+          head_style: parsed.head_bearing_diameter_mm != null ? "custom" : "hex",
+          hole_diameter_mm: parsed.hole_diameter_mm ?? null,
+          thread_rolled: parsed.thread_rolled ?? "before_ht",
+          embedding_mode: parsed.embedding_percent_of_max != null ? "percent" : "vdi",
+          embedding_percent: (parsed.embedding_percent_of_max ?? 0.05) * 100,
+          custom_material: (parsed.custom_material ?? null) as typeof boltConfig.custom_material,
         },
         jointConfig: {
+          ...jointConfig,
           num_bolts: parsed.num_bolts,
           bolt_circle_diameter_mm: parsed.bolt_circle_diameter_mm,
           layers: parsed.layers,
@@ -77,6 +85,11 @@ export function Report() {
           load_intro_factor_n: parsed.load_intro_factor_n,
           plate_thickness_mm: parsed.plate_thickness_mm,
           plate_yield_strength_MPa: parsed.plate_yield_strength_MPa,
+          auto_bearing: false,
+          available_flange_diameter_mm: parsed.available_flange_diameter_mm ?? null,
+          joint_type: parsed.tapped_engagement_length_mm != null ? "tapped" : "through",
+          tapped_engagement_length_mm: parsed.tapped_engagement_length_mm ?? jointConfig.tapped_engagement_length_mm,
+          tapped_material_uts_MPa: parsed.tapped_material_uts_MPa ?? jointConfig.tapped_material_uts_MPa,
         },
         loadCases: parsed.load_cases,
       });

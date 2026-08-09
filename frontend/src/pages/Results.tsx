@@ -208,6 +208,69 @@ function CaseResults({ caseResult }: { caseResult: BoltResults }) {
   );
 }
 
+function CaseMatrix({ cases }: { cases: BoltResults[] }) {
+  // Union of check names, keeping first-case order
+  const checks: string[] = [];
+  cases.forEach((c) =>
+    c.margins.forEach((m) => {
+      if (!checks.includes(m.check_name)) checks.push(m.check_name);
+    })
+  );
+  const cell = (c: BoltResults, name: string) =>
+    c.margins.find((m) => m.check_name === name);
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div className="section-heading" style={{ marginTop: 0 }}>
+        Case Comparison — governing case per check
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="margins-table" style={{ minWidth: 480 }}>
+          <thead>
+            <tr>
+              <th>Check</th>
+              {cases.map((c) => (
+                <th key={c.case_name} className="mono">{c.case_name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {checks.map((name) => {
+              const values = cases.map((c) => cell(c, name)?.value ?? Infinity);
+              const governing = Math.min(...values);
+              return (
+                <tr key={name}>
+                  <td>{name}</td>
+                  {cases.map((c, i) => {
+                    const m = cell(c, name);
+                    if (!m) return <td key={i} className="mono">—</td>;
+                    const isGov = m.value === governing && Number.isFinite(governing);
+                    return (
+                      <td
+                        key={i}
+                        className={`mono ms-value ${m.status.toLowerCase()}`}
+                        style={{
+                          fontWeight: isGov ? 700 : 400,
+                          textDecoration: isGov ? "underline" : "none",
+                        }}
+                        title={isGov ? "Governing case for this check" : undefined}
+                      >
+                        {m.value === Infinity || m.value > 1e8
+                          ? "∞"
+                          : `${m.value >= 0 ? "+" : ""}${m.value.toFixed(3)}`}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function Results() {
   const { results, setCurrentStep, runAnalysis, isAnalyzing } = useAppStore();
   const stale = useResultsStale();
@@ -246,6 +309,7 @@ export function Results() {
           </div>
         </Callout>
       )}
+      {case_results.length > 1 && <CaseMatrix cases={case_results} />}
       {case_results.length === 1 ? (
         <CaseResults caseResult={case_results[0]} />
       ) : (

@@ -57,6 +57,13 @@ const DEFAULT_BOLT: BoltConfig = {
   num_mating_surfaces: 2,
   surface_roughness_Rz: 6.3,
   coating: "Cadmium plated",
+  head_style: "hex",
+  head_bearing_diameter_mm: null,
+  hole_diameter_mm: null,
+  thread_rolled: "before_ht",
+  embedding_mode: "vdi",
+  embedding_percent: 5,
+  custom_material: null,
 };
 
 const DEFAULT_JOINT: JointConfig = {
@@ -69,6 +76,11 @@ const DEFAULT_JOINT: JointConfig = {
   load_intro_factor_n: 0.5,
   plate_thickness_mm: 20,
   plate_yield_strength_MPa: 240,
+  joint_type: "through",
+  tapped_engagement_length_mm: 12,
+  tapped_material_uts_MPa: 310,
+  available_flange_diameter_mm: null,
+  auto_bearing: true,
 };
 
 const DEFAULT_LOAD_CASE: LoadCase = {
@@ -78,7 +90,13 @@ const DEFAULT_LOAD_CASE: LoadCase = {
   shear_force_N: 5000,
   torsion_Nmm: 0,
   load_factor: 1.5,
+  axial_force_min_N: 0,
+  bending_moment_min_Nmm: 0,
+  delta_T_C: 0,
+  load_plane: "interface",
 };
+
+export { DEFAULT_LOAD_CASE };
 
 const DEFAULT_FOS: FosConfig = {
   fos_yield: null,
@@ -195,7 +213,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "boltsizer-v2",
-      version: 2,
+      version: 3,
       // Results are cheap to recompute and can be large — don't persist them.
       partialize: (s) => ({
         currentStep: Math.min(s.currentStep, 2),
@@ -206,6 +224,23 @@ export const useAppStore = create<AppState>()(
         reportMeta: s.reportMeta,
         standard: s.standard,
       }),
+      // Deep-merge persisted config over defaults so states saved by older
+      // versions gain newly added fields instead of dropping them.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AppState>;
+        return {
+          ...current,
+          ...p,
+          boltConfig: { ...current.boltConfig, ...(p.boltConfig ?? {}) },
+          jointConfig: { ...current.jointConfig, ...(p.jointConfig ?? {}) },
+          fos: { ...current.fos, ...(p.fos ?? {}) },
+          reportMeta: { ...current.reportMeta, ...(p.reportMeta ?? {}) },
+          loadCases: (p.loadCases ?? current.loadCases).map((lc) => ({
+            ...DEFAULT_LOAD_CASE,
+            ...lc,
+          })),
+        };
+      },
     }
   )
 );
