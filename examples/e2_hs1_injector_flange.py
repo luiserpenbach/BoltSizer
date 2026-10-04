@@ -152,21 +152,6 @@ SHOW = [
 ]
 
 
-def ecss_external_fos_margins(case, fos_y, fos_u, bolt):
-    """Yield/ultimate margins with the FoS on the external load only
-    (F_b = F_V,max + φ_n·FOS·F_A) — the ECSS-E-HB-32-23A form — for
-    comparison with BoltSizer's FoS-on-total-stress convention."""
-    A_s = bolt.geometry.stress_area
-    F_A = case.load_dist.F_total_axial
-    pre, st = case.preload, case.stiffness
-    out = {}
-    for label, sig, fos in (("yield", bolt.material.yield_strength, fos_y),
-                            ("ultimate", bolt.material.uts, fos_u)):
-        F_b = pre.F_preload_max + st.phi_n * fos * F_A
-        out[label] = sig * A_s / F_b - 1.0
-    return out
-
-
 def main(torque_Nm: float | None = None) -> None:
     print("E2-HS-1 injector flange — 14 × M6 A2-80 tapped into 6082-T6\n")
     for p in (MEOP_BAR, 1.5 * MEOP_BAR, 2 * MEOP_BAR):
@@ -207,10 +192,6 @@ def main(torque_Nm: float | None = None) -> None:
                 m = by.get(n)
                 if m:
                     print(f"    {n:26s} MS = {m.value:+7.2f}  {m.status}")
-            if gname.startswith("Operation"):
-                alt = ecss_external_fos_margins(case, fos["fos_yield"], fos["fos_ultimate"], bc.bolt)
-                print(f"    (ECSS FoS-on-F_A form: yield {alt['yield']:+.2f}, "
-                      f"ultimate {alt['ultimate']:+.2f})")
             for w in case.warnings:
                 print(f"    ! {w}")
 

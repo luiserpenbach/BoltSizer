@@ -85,8 +85,9 @@ function FosPanel() {
     <div style={{ padding: 14, width: 300 }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>Factors of safety</div>
       <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 0 }}>
-        Blank = {standard} default. Applied to every margin as
-        MS&nbsp;=&nbsp;allowable/(FoS·applied)&nbsp;−&nbsp;1.
+        Blank = {standard} default. Working-load FoS multiply the external
+        load only, never the preload: F_b&nbsp;=&nbsp;F_V,max&nbsp;+&nbsp;FoS·φ_n·F_A.
+        Installation FoS multiply the assembly stress.
       </p>
       {rows.map((r) => (
         <FormGroup key={r.key} label={`${r.label} (default ${r.def.toFixed(2)})`} style={{ marginBottom: 8 }}>

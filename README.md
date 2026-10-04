@@ -33,7 +33,7 @@ the substituted formula):
 | Check | Basis |
 |---|---|
 | Yield / Ultimate at assembly | von Mises incl. tightening torsion (VDI §5.5.1) |
-| Yield / Ultimate at working load | 50% residual torsion (VDI §5.5.2), FOSY/FOSU |
+| Yield / Ultimate at working load | 50% residual torsion (VDI §5.5.2), F_V,max + FOSY/FOSU·φ_n·F_A |
 | Joint separation (gapping) | after ALL preload losses, separation FoS |
 | Interface slip | residual clamp × μ × n_i |
 | Bolt shear (yield + ultimate) | 0.577·σ on A_d3 (or shank) |
@@ -46,6 +46,12 @@ bracketing (K_min/K_max × tool scatter, ECSS/SpaceBolt convention),
 embedding per VDI Table 5.4 or %-of-preload, thermal preload change from
 CTE mismatch (ΔT per load case), compression-cone stiffness with D_A
 limit, torsion-induced bolt shear, per-case load-introduction plane.
+
+Factors of safety follow NASA-STD-5020 / ECSS-E-HB-32-23A: in every
+working-load check (yield, ultimate, separation, slip, shear, thread
+stripping) the FoS multiplies the **external load only**, never the
+preload — e.g. `F_b = F_V,max + FoS·φ_n·F_A`. Only the installation
+checks factor the preload stress, because there the preload is the load.
 
 ## Data libraries
 

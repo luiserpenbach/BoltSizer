@@ -10,6 +10,8 @@ Key points of the ECSS convention as implemented:
   2. Yield and ultimate margins carry the ECSS factors of safety
      (baseline FOSY = 1.1, FOSU = 1.25 for metallic hardware verified by
      analysis; override with the project structural verification plan).
+     The factor multiplies the external load only, never the preload:
+     F_b = F_V,max + FOS·φ_n·F_A.
   3. A separation (gapping) factor of safety (baseline 1.2) is applied to
      the opening demand.
   4. Torque-to-yield tightening is prohibited for space hardware

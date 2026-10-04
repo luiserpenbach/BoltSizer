@@ -1,7 +1,17 @@
 """Failure mode margin of safety calculations.
 
-All margins defined as MS = allowable / (FoS · applied) - 1.
+All margins defined as MS = allowable / applied_design - 1.
 Positive MS → PASS.  Minimum acceptable MS = 0.0.
+
+Factor-of-safety convention (NASA-STD-5020 / ECSS-E-HB-32-23A): in the
+working-load checks the FoS multiplies the EXTERNAL load only, never the
+preload — preload is a controlled installation quantity whose scatter is
+already covered by the max/min preload bounds:
+    F_b,design = F_V,max + FoS · φ_n · F_A
+The same applies to separation (FoS on (1−φ_n)·F_A), slip and shear (FoS
+on the applied shear) and thread stripping.  The installation checks are
+the exception: there the preload IS the load, so the installation FoS
+multiplies the assembly stress.
 
 Failure modes implemented:
   1.  Yield at assembly — von Mises with tightening torsion (VDI §5.5.1).
@@ -33,10 +43,15 @@ _LATEX = {
         r"MS = \frac{0.9\,\sigma_y}{\sqrt{\sigma_M^2 + 3\tau_M^2}} - 1"
     ),
     "yield_combined": (
-        r"MS = \frac{\sigma_y}{FoS_y\,\sqrt{\sigma_z^2 + 3(0.5\,\tau_M)^2}} - 1"
+        r"MS = \frac{\sigma_y}{\sqrt{\sigma_z^2 + 3(0.5\,\tau_M)^2}} - 1,\quad"
+        r"\sigma_z = \frac{F_{V,\max} + FoS_y\,\varphi_n F_A}{A_S}"
     ),
     "ultimate_combined": (
-        r"MS = \frac{\sigma_u}{FoS_u\,\sqrt{\sigma_z^2 + 3(0.5\,\tau_M)^2}} - 1"
+        r"MS = \frac{\sigma_u}{\sqrt{\sigma_z^2 + 3(0.5\,\tau_M)^2}} - 1,\quad"
+        r"\sigma_z = \frac{F_{V,\max} + FoS_u\,\varphi_n F_A}{A_S}"
+    ),
+    "ultimate_assembly": (
+        r"MS = \frac{\sigma_u}{FoS_{u,inst}\,\sqrt{\sigma_M^2 + 3\tau_M^2}} - 1"
     ),
     "separation": (
         r"MS = \frac{F_{V,\min}}{FoS_{sep}\,F_{ext}\,(1 - \varphi_n)} - 1"
@@ -61,7 +76,7 @@ _LATEX = {
         r"\sigma_a = \frac{\varphi_n (F_{max} - F_{min})}{2 A_S}"
     ),
     "stripping": (
-        r"MS = \frac{0.577\,\sigma_u\,A_{th}}{FoS_u\,F_{S,\max}} - 1"
+        r"MS = \frac{0.577\,\sigma_u\,A_{th}}{F_{V,\max} + FoS_u\,\varphi_n F_A} - 1"
     ),
 }
 
@@ -238,7 +253,7 @@ def check_ultimate_assembly(
             f"Assembly von Mises stress {sigma_red:.1f} MPa (full tightening "
             f"torsion retained) vs. R_m = {sigma_u:.1f} MPa (FoS {fos:.2f})."
         ),
-        formula_latex=_LATEX["ultimate_combined"],
+        formula_latex=_LATEX["ultimate_assembly"],
     )
 
 
@@ -248,13 +263,18 @@ def _working_equivalent_stress(
     stiffness: StiffnessResult,
     F_ext: float,
     nut_factor_K: Optional[float],
+    fos: float = 1.0,
 ) -> tuple:
     """Working-state equivalent stress per VDI 2230 §5.5.2.
 
-    Returns (sigma_red_B, sigma_z, tau_residual, F_bolt_max).
+    The factor of safety multiplies the external load increment only:
+        F_b = F_V,max + FoS·φ_n·F_A
+    The residual torsion comes from the preload and is not factored.
+
+    Returns (sigma_red_B, sigma_z, tau_residual, F_bolt_design).
     """
     A_s = bolt.geometry.stress_area
-    F_bolt_max = preload.F_preload_max + stiffness.phi_n * max(0.0, F_ext)
+    F_bolt_max = preload.F_preload_max + fos * stiffness.phi_n * max(0.0, F_ext)
     sigma_z = F_bolt_max / A_s if A_s > 0 else 0.0
 
     if nut_factor_K is not None and nut_factor_K > 0:
@@ -277,9 +297,10 @@ def check_yield_combined(
 ) -> MarginOfSafety:
     """Check bolt yield under working load — VDI 2230 §5.5.2.
 
-    Maximum bolt force: F_S_max = F_V_max + φ_n·F_ext.
+    Design bolt force: F_b = F_V_max + FoS_y·φ_n·F_ext (FoS on the
+    external load only, NASA-STD-5020 / ECSS-E-HB-32-23A convention).
     Equivalent stress includes 50% residual tightening torsion:
-        σ_red,B = sqrt(σ_z² + 3·(0.5·τ_M)²)
+        σ_red,B = sqrt(σ_z² + 3·(0.5·τ_M)²),  σ_z = F_b / A_s
 
     Args:
         bolt: Bolt specification.
@@ -288,30 +309,31 @@ def check_yield_combined(
         F_ext: Total external axial force on the critical bolt [N].
         nut_factor_K: Nut factor for residual-torsion derivation
             (None → no residual torsion).
-        fos_yield: Yield factor of safety applied to the stress.
+        fos_yield: Yield factor of safety on the external load.
 
     Returns:
         MarginOfSafety for yield under working load.
     """
-    sigma_red, sigma_z, tau, F_bolt_max = _working_equivalent_stress(
-        bolt, preload, stiffness, F_ext, nut_factor_K
+    sigma_red, sigma_z, tau, F_bolt = _working_equivalent_stress(
+        bolt, preload, stiffness, F_ext, nut_factor_K, fos_yield
     )
     sigma_allow = bolt.material.yield_strength
 
-    ms = _ms(sigma_allow, sigma_red, fos_yield)
+    ms = _ms(sigma_allow, sigma_red)
     return MarginOfSafety(
         check_name="Yield (Working Load)",
         value=ms,
         status=_status(ms),
         binding=False,
         allowable=sigma_allow,
-        applied=fos_yield * sigma_red,
+        applied=sigma_red,
         unit="MPa",
         explanation=(
             f"Working von Mises stress {sigma_red:.1f} MPa "
-            f"(σ_z = {sigma_z:.1f} MPa at F_S_max = {F_bolt_max:.0f} N, "
-            f"residual τ = {tau:.1f} MPa) × FoS {fos_yield:.2f} vs. "
-            f"σ_y = {sigma_allow:.1f} MPa."
+            f"(σ_z = {sigma_z:.1f} MPa at F_b = F_V,max + FoS·φ_n·F_A = "
+            f"{preload.F_preload_max:.0f} + {fos_yield:.2f}·{stiffness.phi_n:.3f}"
+            f"·{max(0.0, F_ext):.0f} = {F_bolt:.0f} N, "
+            f"residual τ = {tau:.1f} MPa) vs. σ_y = {sigma_allow:.1f} MPa."
         ),
         formula_latex=_LATEX["yield_combined"],
     )
@@ -327,29 +349,32 @@ def check_ultimate_combined(
 ) -> MarginOfSafety:
     """Check bolt ultimate strength under working load (ECSS ultimate margin).
 
-    Same stress state as the yield check, compared against R_m with the
-    ultimate factor of safety.
+    Same stress state as the yield check with the ultimate factor of
+    safety on the external load (F_b = F_V_max + FoS_u·φ_n·F_ext),
+    compared against R_m.
 
     Returns:
         MarginOfSafety for ultimate strength.
     """
-    sigma_red, sigma_z, tau, F_bolt_max = _working_equivalent_stress(
-        bolt, preload, stiffness, F_ext, nut_factor_K
+    sigma_red, sigma_z, tau, F_bolt = _working_equivalent_stress(
+        bolt, preload, stiffness, F_ext, nut_factor_K, fos_ultimate
     )
     sigma_allow = bolt.material.uts
 
-    ms = _ms(sigma_allow, sigma_red, fos_ultimate)
+    ms = _ms(sigma_allow, sigma_red)
     return MarginOfSafety(
         check_name="Ultimate (Working Load)",
         value=ms,
         status=_status(ms),
         binding=False,
         allowable=sigma_allow,
-        applied=fos_ultimate * sigma_red,
+        applied=sigma_red,
         unit="MPa",
         explanation=(
-            f"Working von Mises stress {sigma_red:.1f} MPa × FoS_u "
-            f"{fos_ultimate:.2f} vs. R_m = {sigma_allow:.1f} MPa."
+            f"Working von Mises stress {sigma_red:.1f} MPa at F_b = F_V,max + "
+            f"FoS_u·φ_n·F_A = {preload.F_preload_max:.0f} + {fos_ultimate:.2f}"
+            f"·{stiffness.phi_n:.3f}·{max(0.0, F_ext):.0f} = {F_bolt:.0f} N "
+            f"vs. R_m = {sigma_allow:.1f} MPa."
         ),
         formula_latex=_LATEX["ultimate_combined"],
     )
@@ -722,10 +747,11 @@ def check_fatigue(
 
 def check_thread_stripping(
     bolt: Bolt,
-    F_bolt_max: float,
+    F_preload_max: float,
     engagement_length: float,
     internal_thread_uts: float,
     fos_ultimate: float = 1.0,
+    F_ext_increment: float = 0.0,
 ) -> MarginOfSafety:
     """Check thread stripping for tapped joints (no nut).
 
@@ -740,12 +766,17 @@ def check_thread_stripping(
     proof-load matching prevents stripping; this check applies to tapped
     holes only.
 
+    Design thread force (FoS on the external increment only):
+        F_b = F_V,max + FoS_u·φ_n·F_A
+
     Args:
         bolt: Bolt specification.
-        F_bolt_max: Maximum bolt tension [N].
+        F_preload_max: Maximum preload F_V,max [N] (not factored).
         engagement_length: Thread engagement length L_e [mm].
         internal_thread_uts: UTS of the tapped (internal thread) material [MPa].
-        fos_ultimate: Ultimate factor of safety.
+        fos_ultimate: Ultimate factor of safety on the external increment.
+        F_ext_increment: Bolt force increment from the external load,
+            φ_n·F_A [N].
 
     Returns:
         MarginOfSafety for thread stripping (weaker of the two threads).
@@ -764,19 +795,21 @@ def check_thread_stripping(
     capacity = min(cap_int, cap_ext)
     weaker = "internal (tapped)" if cap_int <= cap_ext else "external (bolt)"
 
-    ms = _ms(capacity, F_bolt_max, fos_ultimate) if F_bolt_max > 0 else float("inf")
+    F_design = F_preload_max + fos_ultimate * max(0.0, F_ext_increment)
+    ms = _ms(capacity, F_design) if F_design > 0 else float("inf")
     return MarginOfSafety(
         check_name="Thread Stripping",
         value=ms,
         status=_status(ms),
         binding=False,
         allowable=capacity,
-        applied=fos_ultimate * F_bolt_max,
+        applied=F_design,
         unit="N",
         explanation=(
             f"Stripping capacity {capacity:.0f} N ({weaker} thread governs, "
-            f"L_e_eff = {L_e_eff:.1f} mm) vs. FoS_u·F_S_max = "
-            f"{fos_ultimate:.2f}·{F_bolt_max:.0f} N."
+            f"L_e_eff = {L_e_eff:.1f} mm) vs. F_V,max + FoS_u·φ_n·F_A = "
+            f"{F_preload_max:.0f} + {fos_ultimate:.2f}·{max(0.0, F_ext_increment):.0f}"
+            f" = {F_design:.0f} N."
         ),
         formula_latex=_LATEX["stripping"],
     )
@@ -882,9 +915,9 @@ def calculate_all_margins(
 
     # 10. Thread stripping (tapped joints only)
     if tapped_engagement_length is not None and tapped_material_uts is not None:
-        F_bolt_max = preload.F_preload_max + stiffness.phi_n * max(0.0, F_ext)
         margins.append(check_thread_stripping(
-            bolt, F_bolt_max, tapped_engagement_length, tapped_material_uts, fos_ultimate))
+            bolt, preload.F_preload_max, tapped_engagement_length, tapped_material_uts,
+            fos_ultimate, F_ext_increment=stiffness.phi_n * max(0.0, F_ext)))
 
     # Sort worst-first; cap inf for comparison
     margins.sort(key=lambda m: m.value if m.value != float("inf") else 1e9)

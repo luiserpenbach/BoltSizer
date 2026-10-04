@@ -279,7 +279,7 @@ class TestThreadStripping:
     def test_weak_internal_thread_governs(self):
         bolt = _bolt("M12", "ISO 12.9")
         # Aluminium tapped hole (UTS 300) vs high-strength bolt
-        ms = check_thread_stripping(bolt, F_bolt_max=30000,
+        ms = check_thread_stripping(bolt, F_preload_max=30000,
                                     engagement_length=12.0,
                                     internal_thread_uts=300.0)
         assert "internal" in ms.explanation
@@ -289,6 +289,54 @@ class TestThreadStripping:
         ms_short = check_thread_stripping(bolt, 30000, 8.0, 300.0)
         ms_long = check_thread_stripping(bolt, 30000, 20.0, 300.0)
         assert ms_long.value > ms_short.value
+
+    def test_fos_on_external_increment_only(self):
+        """F_design = F_V,max + FoS·φ_n·F_A — the preload is not factored."""
+        bolt = _bolt("M12", "ISO 8.8")
+        ms = check_thread_stripping(bolt, 30000, 12.0, 300.0,
+                                    fos_ultimate=2.0, F_ext_increment=1000.0)
+        assert math.isclose(ms.applied, 30000 + 2.0 * 1000.0)
+        assert math.isclose(ms.value, ms.allowable / 32000.0 - 1.0)
+
+
+class TestFosOnExternalLoadOnly:
+    """NASA-STD-5020 / ECSS-E-HB-32-23A: FoS multiplies the external load,
+    not the preload, in the working-load yield and ultimate checks."""
+
+    def test_yield_design_force(self):
+        bolt = _bolt("M12", "ISO 8.8")
+        pre, stiff = _preload(), _stiffness()
+        F_A = 10000.0
+        ms = check_yield_combined(bolt, pre, stiff, F_A, nut_factor_K=None, fos_yield=1.25)
+        sigma_z = (pre.F_preload_max + 1.25 * stiff.phi_n * F_A) / bolt.geometry.stress_area
+        assert math.isclose(ms.applied, sigma_z, rel_tol=1e-12)
+        assert math.isclose(ms.value, bolt.material.yield_strength / sigma_z - 1.0, rel_tol=1e-12)
+
+    def test_ultimate_design_force(self):
+        bolt = _bolt("M12", "ISO 8.8")
+        pre, stiff = _preload(), _stiffness()
+        F_A = 10000.0
+        ms = check_ultimate_combined(bolt, pre, stiff, F_A, nut_factor_K=None, fos_ultimate=2.0)
+        sigma_z = (pre.F_preload_max + 2.0 * stiff.phi_n * F_A) / bolt.geometry.stress_area
+        assert math.isclose(ms.value, bolt.material.uts / sigma_z - 1.0, rel_tol=1e-12)
+
+    def test_fos_has_no_effect_without_external_load(self):
+        """With F_A = 0 the bolt carries preload only — FoS must not change MS."""
+        bolt = _bolt("M12", "ISO 8.8")
+        pre, stiff = _preload(), _stiffness()
+        ms_1 = check_yield_combined(bolt, pre, stiff, 0.0, nut_factor_K=0.16, fos_yield=1.0)
+        ms_2 = check_yield_combined(bolt, pre, stiff, 0.0, nut_factor_K=0.16, fos_yield=2.0)
+        assert math.isclose(ms_1.value, ms_2.value, rel_tol=1e-12)
+
+    def test_residual_torsion_not_factored(self):
+        bolt = _bolt("M12", "ISO 8.8")
+        pre, stiff = _preload(), _stiffness()
+        F_A = 10000.0
+        ms = check_yield_combined(bolt, pre, stiff, F_A, nut_factor_K=0.16, fos_yield=1.5)
+        sigma_z = (pre.F_preload_max + 1.5 * stiff.phi_n * F_A) / bolt.geometry.stress_area
+        from boltsizer.calculations.failure_modes import _thread_shear_stress
+        tau = 0.5 * _thread_shear_stress(bolt, compute_thread_torque(bolt, 0.16, pre.F_M_max))
+        assert math.isclose(ms.applied, math.sqrt(sigma_z ** 2 + 3 * tau ** 2), rel_tol=1e-12)
 
 
 class TestCalculateAllMargins:

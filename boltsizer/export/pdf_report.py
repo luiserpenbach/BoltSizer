@@ -159,6 +159,11 @@ def generate_pdf_report(
             [name, f"{value:.2f}"] for name, value in fos_summary.items()
         ]
         story.append(_make_table(fos_rows, col_widths=[70*mm, 30*mm]))
+        story.append(Paragraph(
+            "Working-load factors multiply the external load only "
+            "(F_b = F_V,max + FoS·φ_n·F_A; separation: FoS·(1−φ_n)·F_A), "
+            "never the preload. Installation factors multiply the assembly "
+            "stress.", body))
         story.append(Spacer(1, 4*mm))
 
     # -----------------------------------------------------------------------
