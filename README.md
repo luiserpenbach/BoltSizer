@@ -14,7 +14,7 @@ calculation engine.
 ## Quickstart
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cd frontend && npm install && cd ..
 ./start_react.sh
 # React app:  http://localhost:5173

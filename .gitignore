@@ -8,3 +8,6 @@ build/
 .env
 .venv
 
+.vercel
+.env*.local
+node_modules/

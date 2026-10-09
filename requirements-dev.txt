@@ -1,0 +1,6 @@
+# Local development, tests and CI.
+-r requirements.txt
+uvicorn>=0.27.0
+httpx>=0.27.0
+pytest>=8.0.0
+pytest-cov>=4.1.0

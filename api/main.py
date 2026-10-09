@@ -8,6 +8,7 @@ import sys
 import os
 import json
 import io
+import logging
 from typing import List, Optional, Literal
 
 # Add project root to path so boltsizer package is importable
@@ -31,15 +32,44 @@ from boltsizer.calculations.sizing import torque_window, suggest_bolts, sensitiv
 from boltsizer.export.pdf_report import generate_pdf_report, generate_project_pdf
 from boltsizer import __version__ as ENGINE_VERSION
 
+logger = logging.getLogger("boltsizer.api")
+
 app = FastAPI(title="BoltSizer API", version="1.1.0")
+
+# In production the frontend is served from the same origin as the API, so
+# CORS is only needed for the local Vite dev server. Extra origins can be
+# allowed via BOLTSIZER_CORS_ORIGINS (comma-separated).
+_DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get("BOLTSIZER_CORS_ORIGINS", _DEFAULT_CORS_ORIGINS).split(",")
+    if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+
+
+def _internal_error(e: Exception) -> HTTPException:
+    """Log an unexpected failure and return a generic 500 (no internals leaked)."""
+    logger.exception("Unhandled error in API request", exc_info=e)
+    return HTTPException(status_code=500, detail="Internal error while processing the request.")
+
+
+# Request-size limits: keep a single request's compute bounded.
+MAX_BOLTS = 500
+MAX_GRID = 50
+MAX_LAYERS = 50
+MAX_LOAD_CASES = 50
+MAX_GROUPS = 30
+MAX_SWEEP_POINTS = 120
+MAX_CANDIDATES = 40
+MAX_TEXT = 200
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +131,8 @@ class CustomMaterial(BaseModel):
 
 
 class _BoltFields(BaseModel):
-    designation: str
-    grade: str
+    designation: str = Field(max_length=MAX_TEXT)
+    grade: str = Field(max_length=MAX_TEXT)
     shank_length_mm: float = 20.0
     threaded_length_mm: float = 15.0
     nut_factor_K: float = 0.16
@@ -111,7 +141,7 @@ class _BoltFields(BaseModel):
     tool_scatter_pct: Optional[float] = None       # e.g. 0.05 for ±5% torque tool
     assembly_torque_Nmm: float = 0.0
     target_preload_N: float = 0.0
-    tightening_method: str = "torque_wrench"
+    tightening_method: str = Field("torque_wrench", max_length=MAX_TEXT)
     num_mating_surfaces: int = 2
     surface_roughness_Rz: float = 6.3
     embedding_percent_of_max: Optional[float] = None  # e.g. 0.05 → F_Z = 5%·F_M_max
@@ -126,15 +156,15 @@ class PreloadPreviewRequest(_BoltFields):
     # Optional layer stack — enables the correct embedding loss
     # F_Z = f_Z/(δ_S+δ_P); without it a single steel layer of the grip
     # length is assumed for the preview.
-    layers: Optional[List[dict]] = None
+    layers: Optional[List[dict]] = Field(None, max_length=MAX_LAYERS)
 
 
 class StiffnessPreviewRequest(_BoltFields):
     # Joint
-    num_bolts: int = 8
+    num_bolts: int = Field(8, ge=1, le=MAX_BOLTS)
     bolt_circle_diameter_mm: float = 100.0
-    layers: List[dict] = Field(default_factory=lambda: [{"material": "Steel (carbon)", "thickness_mm": 20.0, "E": 210000.0}])
-    interface_treatment: str = "bare metal"
+    layers: List[dict] = Field(default_factory=lambda: [{"material": "Steel (carbon)", "thickness_mm": 20.0, "E": 210000.0}], max_length=MAX_LAYERS)
+    interface_treatment: str = Field("bare metal", max_length=MAX_TEXT)
     friction_coefficient: float = 0.12
     num_friction_interfaces: int = 1
     load_intro_factor_n: float = 0.5
@@ -145,7 +175,7 @@ class StiffnessPreviewRequest(_BoltFields):
 
 
 class LoadCaseRequest(BaseModel):
-    case_name: str = "LC1"
+    case_name: str = Field("LC1", max_length=MAX_TEXT)
     axial_force_N: float = 0.0
     bending_moment_Nmm: float = 0.0
     shear_force_N: float = 0.0
@@ -158,24 +188,24 @@ class LoadCaseRequest(BaseModel):
 
 
 class ReportMeta(BaseModel):
-    project_name: str = ""
-    revision: str = "A"
-    engineer_name: str = ""
+    project_name: str = Field("", max_length=MAX_TEXT)
+    revision: str = Field("A", max_length=MAX_TEXT)
+    engineer_name: str = Field("", max_length=MAX_TEXT)
 
 
 class AnalyzeRequest(_BoltFields):
     # Joint geometry
-    num_bolts: int = 8
+    num_bolts: int = Field(8, ge=1, le=MAX_BOLTS)
     bolt_circle_diameter_mm: float = 100.0
     # Bolt pattern (default circle keeps historical behaviour)
     pattern: Literal["circle", "rectangle", "custom"] = "circle"
-    rect_nx: int = 2
-    rect_ny: int = 2
+    rect_nx: int = Field(2, ge=1, le=MAX_GRID)
+    rect_ny: int = Field(2, ge=1, le=MAX_GRID)
     rect_pitch_x_mm: float = 60.0
     rect_pitch_y_mm: float = 60.0
-    custom_positions_mm: Optional[List[List[float]]] = None  # [[x, y], ...]
-    layers: List[dict] = Field(default_factory=lambda: [{"material": "Steel (carbon)", "thickness_mm": 20.0, "E": 210000.0}])
-    interface_treatment: str = "bare metal"
+    custom_positions_mm: Optional[List[List[float]]] = Field(None, max_length=MAX_BOLTS)  # [[x, y], ...]
+    layers: List[dict] = Field(default_factory=lambda: [{"material": "Steel (carbon)", "thickness_mm": 20.0, "E": 210000.0}], max_length=MAX_LAYERS)
+    interface_treatment: str = Field("bare metal", max_length=MAX_TEXT)
     friction_coefficient: float = 0.12
     num_friction_interfaces: int = 1
     load_intro_factor_n: float = 0.5
@@ -199,7 +229,7 @@ class AnalyzeRequest(_BoltFields):
     fos_yield_installation: float = 1.0
     fos_ultimate_installation: float = 1.0
     # Load cases
-    load_cases: List[LoadCaseRequest] = Field(default_factory=lambda: [LoadCaseRequest()])
+    load_cases: List[LoadCaseRequest] = Field(default_factory=lambda: [LoadCaseRequest()], max_length=MAX_LOAD_CASES)
     standard: Literal["VDI", "ECSS"] = "VDI"
     report_meta: Optional[ReportMeta] = None
 
@@ -424,7 +454,7 @@ def preview_preload(req: PreloadPreviewRequest):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/api/preview/stiffness")
@@ -451,7 +481,7 @@ def preview_stiffness(req: StiffnessPreviewRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +560,7 @@ def analyze(req: AnalyzeRequest):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -540,12 +570,12 @@ def analyze(req: AnalyzeRequest):
 class TorqueWindowRequest(AnalyzeRequest):
     torque_min_Nmm: Optional[float] = None
     torque_max_Nmm: Optional[float] = None
-    sweep_points: int = 60
+    sweep_points: int = Field(60, ge=2, le=MAX_SWEEP_POINTS)
 
 
 class SuggestBoltsRequest(AnalyzeRequest):
-    sweep_points: int = 30
-    max_candidates: int = 24
+    sweep_points: int = Field(30, ge=2, le=MAX_SWEEP_POINTS)
+    max_candidates: int = Field(24, ge=1, le=MAX_CANDIDATES)
 
 
 @app.post("/api/torque-window")
@@ -565,7 +595,7 @@ def torque_window_endpoint(req: TorqueWindowRequest):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/api/suggest-bolts")
@@ -586,7 +616,7 @@ def suggest_bolts_endpoint(req: SuggestBoltsRequest):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/api/sensitivity")
@@ -600,7 +630,7 @@ def sensitivity_endpoint(req: AnalyzeRequest):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -679,17 +709,19 @@ def export_pdf(req: AnalyzeRequest):
         )
     except HTTPException:
         raise
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 class ProjectGroup(BaseModel):
-    name: str
+    name: str = Field(max_length=MAX_TEXT)
     request: AnalyzeRequest
 
 
 class ProjectPdfRequest(BaseModel):
-    groups: List[ProjectGroup]
+    groups: List[ProjectGroup] = Field(max_length=MAX_GROUPS)
     report_meta: Optional[ReportMeta] = None
 
 
@@ -723,7 +755,7 @@ def export_project_pdf(req: ProjectPdfRequest):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 if __name__ == "__main__":
